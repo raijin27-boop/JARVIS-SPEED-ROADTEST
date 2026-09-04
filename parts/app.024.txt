@@ -1,0 +1,84 @@
+
+/* v6.15.0.1 — restore route preview ownership inside the integrated renderer.
+   START前: all route candidates + labels + fit bounds.
+   START後: selected active route only. Old polylines remain until replacement set is ready. */
+{
+  jarvisRenderRoute=function(){
+    const colors=['#238cff','#72d2ff','#8ee6a8'];
+    const oldPrimary=navRouteLine;
+    const oldLines=Array.isArray(navAltRouteLines)?navAltRouteLines.slice():[];
+    const newLines=[];
+    let newPrimary=null;
+
+    if(navGoogleMap&&routeCandidates?.length){
+      try{
+        if(navSessionStarted){
+          const r=routeCandidates[selectedRouteIndex]||routeData;
+          if(r?.path?.length>=2){
+            newPrimary=new google.maps.Polyline({
+              map:navGoogleMap,path:r.path,strokeColor:'#238cff',
+              strokeOpacity:jarvisDeviationEscape?.35:.98,
+              strokeWeight:jarvisDeviationEscape?7:11,zIndex:20,clickable:false
+            });
+            if((newPrimary.getPath?.().getLength?.()||0)<2)throw new Error('short-active-route');
+            newLines.push(newPrimary);
+          }
+        }else{
+          // Preview mode must show the candidate set, not only the selected route.
+          routeCandidates.forEach((r,i)=>{
+            if(!r?.path?.length||r.path.length<2)return;
+            const selected=i===selectedRouteIndex;
+            const line=new google.maps.Polyline({
+              map:navGoogleMap,path:r.path,
+              strokeColor:colors[i]||'#72d2ff',
+              strokeOpacity:selected?.98:.76,
+              strokeWeight:selected?11:7,
+              zIndex:selected?16:10-i,
+              clickable:true
+            });
+            if((line.getPath?.().getLength?.()||0)<2){line.setMap?.(null);return;}
+            line.addListener('click',()=>jarvisSelectRoute(i));
+            newLines.push(line);
+            if(selected)newPrimary=line;
+          });
+          if(!newPrimary)newPrimary=newLines[0]||null;
+        }
+
+        if(newLines.length){
+          navRouteLine=newPrimary;
+          navAltRouteLines=newLines;
+          // Replacement is visible; now tear down the previous generation.
+          for(const line of oldLines){if(newLines.includes(line))continue;try{line?.setMap?.(null)}catch(e){}try{line?.remove?.()}catch(e){}}
+          if(oldPrimary&&!oldLines.includes(oldPrimary)&&!newLines.includes(oldPrimary)){try{oldPrimary?.setMap?.(null)}catch(e){}}
+        }
+      }catch(e){
+        for(const line of newLines){try{line?.setMap?.(null)}catch(_){}try{line?.remove?.()}catch(_){} }
+        navRouteLine=oldPrimary;navAltRouteLines=oldLines;
+        try{jarvisRoadTestMarker?.('ROUTE_RENDER_FAILED',{core:'v6.15.0.1',error:String(e?.message||e)});}catch(_){}
+        return;
+      }
+    }
+
+    // Labels are preview-only; build them after the new route geometry owns the map.
+    jarvisClearRouteLabels?.();
+    if(routePreviewActive&&!navSessionStarted&&routeCandidates?.length){
+      jarvisComputeRouteLabelPoints?.();
+      routeCandidates.forEach((r,i)=>{try{navRouteLabels.push(jarvisCreateRouteLabel(navGoogleMap,r,i));}catch(e){}});
+      // Critical regression fix: without this, the route can be valid/rendered but outside the viewport.
+      jarvisFitRoutePreview?.();
+    }
+
+    if(landGoogleMap&&routeData?.path?.length>=2){
+      const oldLand=landRouteLine;let freshLand=null;
+      try{
+        freshLand=new google.maps.Polyline({map:landGoogleMap,path:routeData.path,strokeColor:colors[selectedRouteIndex]||'#238cff',strokeOpacity:.94,strokeWeight:10,zIndex:12});
+        if((freshLand.getPath?.().getLength?.()||0)>=2){landRouteLine=freshLand;oldLand?.setMap?.(null);}else freshLand?.setMap?.(null);
+      }catch(e){}
+    }
+
+    if(navSessionStarted&&jarvisDeviationEscape)jarvisSetRouteGuidanceAppearance?.(false);
+    jarvisUpdateMapStartButton?.();
+    if(mapViewMode==='3D')jarvisApplyVector3D?.();
+    try{jarvisRoadTestMarker?.('ROUTE_RENDER_ATOMIC',{core:'v6.15.0.1',generation:typeof jarvisCoreRouteGeneration==='number'?jarvisCoreRouteGeneration:null,pathLength:(routeCandidates?.[selectedRouteIndex]||routeData)?.path?.length||0,preview:!navSessionStarted,candidateCount:routeCandidates?.length||0,fitted:!!(routePreviewActive&&!navSessionStarted)});}catch(e){}
+  };
+}
