@@ -1,0 +1,200 @@
+  if(!routes.length){window.jarvisRouteLabelPoints=[];return [];}
+  const ll=(p)=>({latitude:typeof p?.lat==='function'?p.lat():Number(p?.lat),longitude:typeof p?.lng==='function'?p.lng():Number(p?.lng)});
+  const meters=(a,b)=>haversine(ll(a),ll(b));
+  const candidates=routes.map((route,ri)=>{
+    const path=route.path; const out=[];
+    const start=Math.max(1,Math.floor(path.length*0.12));
+    const end=Math.min(path.length-2,Math.ceil(path.length*0.88));
+    const count=18;
+    for(let n=0;n<count;n++){
+      const idx=Math.max(start,Math.min(end,Math.round(start+(end-start)*(n/(count-1)))));
+      const pt=path[idx];
+      let exclusive=99999;
+      routes.forEach((other,oj)=>{
+        if(oj===ri)return;
+        const op=other.path; const os=Math.max(1,Math.floor(op.length/36)); let near=99999;
+        for(let k=0;k<op.length;k+=os) near=Math.min(near,meters(pt,op[k]));
+        exclusive=Math.min(exclusive,near);
+      });
+      if(routes.length===1)exclusive=0;
+      const edge=Math.min(idx-start,end-idx)/Math.max(1,end-start);
+      out.push({pt,exclusive,edge});
+    }
+    return out;
+  });
+  let best=null,bestScore=-Infinity;
+  const scoreSet=(set)=>{
+    let minPair=99999,sumPair=0,pairs=0;
+    for(let a=0;a<set.length;a++)for(let b=a+1;b<set.length;b++){
+      const d=meters(set[a].pt,set[b].pt);minPair=Math.min(minPair,d);sumPair+=d;pairs++;
+    }
+    if(!pairs)minPair=0;
+    const avgPair=pairs?sumPair/pairs:0;
+    const exclusive=set.reduce((t,x)=>t+Math.min(x.exclusive,1800),0);
+    const edge=set.reduce((t,x)=>t+x.edge,0);
+    let penalty=0;
+    if(minPair<900)penalty+=(900-minPair)*7;
+    if(minPair<500)penalty+=(500-minPair)*12;
+    return minPair*6 + avgPair*1.7 + exclusive*1.6 + edge*250 - penalty;
+  };
+  if(candidates.length===1){best=[candidates[0][Math.floor(candidates[0].length/2)]];}
+  else if(candidates.length===2){
+    for(const a of candidates[0])for(const b of candidates[1]){const set=[a,b],sc=scoreSet(set);if(sc>bestScore){bestScore=sc;best=set;}}
+  }else{
+    for(const a of candidates[0])for(const b of candidates[1])for(const c of candidates[2]){const set=[a,b,c],sc=scoreSet(set);if(sc>bestScore){bestScore=sc;best=set;}}
+  }
+  const points=(best||[]).map(x=>x.pt);
+  window.jarvisRouteLabelPoints=points; return points;
+}
+function jarvisRouteLabelPoint(route,i){
+  const points=window.jarvisRouteLabelPoints?.length===routeCandidates.length?window.jarvisRouteLabelPoints:jarvisComputeRouteLabelPoints();
+  return points?.[i] || route?.path?.[Math.floor((route.path.length-1)*(0.28+i*0.22))] || null;
+}
+function jarvisCreateRouteLabel(map,route,i){
+  if(!map||!route?.path?.length)return null;
+  const overlay=new google.maps.OverlayView();
+  overlay.position=jarvisRouteLabelPoint(route,i); overlay.div=null;
+  overlay.onAdd=function(){
+    const d=document.createElement('button');d.type='button';d.className=`route-map-label r${i}${i===selectedRouteIndex?' selected':''}`;
+    d.textContent=`${Math.max(1,Math.round(route.durationMillis/60000))}分 · ${jarvisRouteDistanceText(route)}`;
+    d.addEventListener('click',ev=>{ev.preventDefault();ev.stopPropagation();jarvisSelectRoute(i)});
+    this.div=d;this.getPanes().overlayMouseTarget.appendChild(d);
+  };
+  overlay.draw=function(){if(!this.div||!this.position)return;const pt=this.getProjection().fromLatLngToDivPixel(this.position);if(!pt)return;this.div.style.left=pt.x+'px';this.div.style.top=pt.y+'px';};
+  overlay.onRemove=function(){this.div?.remove();this.div=null}; overlay.setMap(map); return overlay;
+}
+function jarvisFitRoutePreview(){
+  if(!navGoogleMap||!routeCandidates.length||navSessionStarted)return;
+  routePreviewActive=true;
+  const bounds=new google.maps.LatLngBounds();
+  if(typeof currentLat==='number'&&typeof currentLon==='number')bounds.extend({lat:currentLat,lng:currentLon});
+  if(destination)bounds.extend({lat:destination.lat,lng:destination.lon});
+  routeCandidates.forEach(r=>r.path?.forEach(pt=>bounds.extend(pt)));
+  navMapFollow=false;navMapUserMoved=true;
+  requestAnimationFrame(()=>{google.maps.event.trigger(navGoogleMap,'resize');navGoogleMap.fitBounds(bounds,{top:120,right:44,bottom:150,left:44});jarvisUpdateRecenterButton();});
+}
+function jarvisScrollToMap(){
+  const shell=document.querySelector('#navPanel .nav-map-shell');
+  if(!shell)return;
+  setTimeout(()=>shell.scrollIntoView({behavior:'smooth',block:'start'}),40);
+}
+function jarvisRouteButtonColor(i){
+  return ['#0b63ce','#72d2ff','#8fe6b0'][i]||'#0b63ce';
+}
+function jarvisCleanInstruction(text){
+  if(!text)return '';
+  const d=document.createElement('div');d.innerHTML=String(text);return (d.textContent||d.innerText||'').replace(/\s+/g,' ').trim();
+}
+function jarvisVoiceManeuverText(m){
+  const key=String(m||'').toUpperCase();
+  const map={
+    TURN_LEFT:'左折です',TURN_RIGHT:'右折です',TURN_SLIGHT_LEFT:'斜め左方向です',TURN_SLIGHT_RIGHT:'斜め右方向です',
+    TURN_SHARP_LEFT:'大きく左折です',TURN_SHARP_RIGHT:'大きく右折です',STRAIGHT:'直進です',CONTINUE:'そのまま直進です',
+    U_TURN_LEFT:'左方向へUターンです',U_TURN_RIGHT:'右方向へUターンです',RAMP_LEFT:'左のランプへ進みます',RAMP_RIGHT:'右のランプへ進みます',OFF_RAMP_LEFT:'左の出口です',OFF_RAMP_RIGHT:'右の出口です',EXIT_LEFT:'左の出口です',EXIT_RIGHT:'右の出口です',
+    FORK_LEFT:'左方向へ進みます',FORK_RIGHT:'右方向へ進みます',KEEP_LEFT:'左方向を維持します',KEEP_RIGHT:'右方向を維持します',MERGE:'合流します',ROUNDABOUT_LEFT:'ロータリーに入ります',ROUNDABOUT_RIGHT:'ロータリーに入ります'
+  };
+  return map[key]||'';
+}
+function jarvisVoiceStepText(step){
+  const dir=jarvisTurnDir(step);
+  if(dir==='RIGHT')return '右折です';
+  if(dir==='LEFT')return '左折です';
+  return '';
+}
+function jarvisVoiceLatLng(v){
+  if(!v)return null;
+  const lat=typeof v.lat==='function'?v.lat():Number(v.lat??v.latitude);
+  const lng=typeof v.lng==='function'?v.lng():Number(v.lng??v.longitude);
+  return Number.isFinite(lat)&&Number.isFinite(lng)?{latitude:lat,longitude:lng}:null;
+}
+function jarvisVoiceStepStart(step){
+  let p=jarvisVoiceLatLng(step?.startLocation||step?.startLatLng);
+  if(p)return p;
+  const path=step?.path;
+  if(Array.isArray(path)&&path.length)return jarvisVoiceLatLng(path[0]);
+  return null;
+}
+function jarvisVoiceStepEnd(step){
+  let p=jarvisVoiceLatLng(step?.endLocation||step?.endLatLng);
+  if(p)return p;
+  const path=step?.path;
+  if(Array.isArray(path)&&path.length)return jarvisVoiceLatLng(path[path.length-1]);
+  return null;
+}
+function jarvisVoiceManeuverPoint(step){
+  // Google maneuver is performed at the beginning of the step.
+  // Using the step end shifts guidance to the next junction / straight section.
+  return jarvisVoiceStepStart(step)||jarvisVoiceStepEnd(step);
+}
+function jarvisVoiceSteps(){
+  const src=(routeCandidates[selectedRouteIndex]||routeData)?.sourceRoute;
+  const legs=src?.legs||[];const out=[];
+  for(const leg of legs)for(const st of (leg?.steps||[]))out.push(st);
+  return out;
+}
+function jarvisGuidanceDiagnosticText(){
+  try{
+    const evs=jarvisTurnEvents();
+    const e=evs.find(x=>!Number.isFinite(jarvisMotion.displayS)||x.endS+8>=jarvisMotion.displayS) || evs[0];
+    if(!e)return'案内診断: Google step案内なし';
+    const st=jarvisVoiceSteps()[e.stepIndex];
+    const ins=jarvisStepInstruction(st);
+    return `案内診断: ${e.kind||'TURN'} / ${e.maneuver||'NO_MANEUVER'}${ins?' / '+ins:''}`;
+  }catch(_){return'案内診断: 取得不可';}
+}
+function jarvisUpdateGuidanceDiagnostic(){
+  const el=document.getElementById('jarvisGuidanceDiag');
+  if(el)el.textContent=jarvisGuidanceDiagnosticText();
+}
+function jarvisLogVoiceEvent(text,accepted,reason,meta){
+  try{
+    window.__jarvisVoiceEvents.push({
+      at:Date.now(),sessionId:jarvisVoiceSessionId,text:String(text||''),
+      key:meta?.key||null,level:meta?.level||null,accepted:!!accepted,reason:reason||''
+    });
+    if(window.__jarvisVoiceEvents.length>2000)window.__jarvisVoiceEvents.splice(0,window.__jarvisVoiceEvents.length-2000);
+  }catch(e){}
+}
+// v6.14.44 VOICE TRUTH: every call is recorded in window.__jarvisVoiceEvents, accepted or not, so
+// callers (and the simulator) can tell "we asked to speak" apart from "speechSynthesis actually
+// queued it". A caller that only marks its own state as announced when this returns true can no
+// longer produce the earlier bug where a cooldown-rejected call was marked announced and then
+// never spoken (v6.14.41 root cause).
+function jarvisSpeak(text,force=false,meta=null){
+  if(!voiceGuideEnabled||!text||!('speechSynthesis' in window)){jarvisLogVoiceEvent(text,false,'disabled',meta);return false;}
+  const now=Date.now();
+  if(!force&&now-voiceLastSpokenAt<2200){jarvisLogVoiceEvent(text,false,'cooldown',meta);return false;}
+  try{
+    if(force)window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(String(text));u.lang='ja-JP';u.rate=voiceRate;u.pitch=voicePitch;u.volume=voiceVolume;
+    const voices=window.speechSynthesis.getVoices?.()||[];
+    const jaVoices=voices.filter(v=>/^ja([-_]|$)/i.test(v.lang||''));
+    const chosen=jaVoices.find(v=>(v.voiceURI||v.name)===voiceSelectedId)||jaVoices[0];if(chosen)u.voice=chosen;
+    window.speechSynthesis.speak(u);voiceLastSpokenAt=now;
+    jarvisLogVoiceEvent(text,true,'',meta);
+    return true;
+  }catch(e){console.warn('voice guide',e);jarvisLogVoiceEvent(text,false,'exception',meta);return false}
+}
+function jarvisVoiceId(v){return String(v?.voiceURI||v?.name||'');}
+function jarvisPopulateVoiceSelect(){
+  const sel=$('voiceSelect');if(!sel||!('speechSynthesis' in window))return;
+  const voices=(window.speechSynthesis.getVoices?.()||[]).filter(v=>/^ja([-_]|$)/i.test(v.lang||''));
+  const current=voiceSelectedId;sel.innerHTML='';
+  if(!voices.length){const o=document.createElement('option');o.value='';o.textContent='日本語音声を読み込み中…';sel.appendChild(o);setTextIf('voiceSettingsStatus','日本語音声を読み込み中です。');return;}
+  voices.forEach((v,i)=>{const o=document.createElement('option');o.value=jarvisVoiceId(v);o.textContent=`${v.name||'日本語音声'}${v.localService?'':'（オンライン）'}`;sel.appendChild(o);});
+  if(current&&voices.some(v=>jarvisVoiceId(v)===current))sel.value=current;else{sel.value=jarvisVoiceId(voices[0]);voiceSelectedId=sel.value;}
+  setTextIf('voiceSettingsStatus',`日本語音声 ${voices.length}種類を検出`);
+}
+function jarvisSyncVoiceSettingsUI(){
+  const r=$('voiceRate'),p=$('voicePitch'),v=$('voiceVolume');if(r)r.value=String(voiceRate);if(p)p.value=String(voicePitch);if(v)v.value=String(voiceVolume);
+  setTextIf('voiceRateValue',voiceRate.toFixed(2));setTextIf('voicePitchValue',voicePitch.toFixed(2));setTextIf('voiceVolumeValue',`${Math.round(voiceVolume*100)}%`);
+  jarvisPopulateVoiceSelect();
+}
+function jarvisSaveVoiceSettings(){
+  localStorage.setItem('jarvisVoiceId',voiceSelectedId);localStorage.setItem('jarvisVoiceRate',String(voiceRate));localStorage.setItem('jarvisVoicePitch',String(voicePitch));localStorage.setItem('jarvisVoiceVolume',String(voiceVolume));
+}
+function jarvisBindVoiceSettings(){
+  bind('voiceSelect','change',e=>{voiceSelectedId=e.target.value||'';jarvisSaveVoiceSettings();});
+  bind('voiceRate','input',e=>{voiceRate=Number(e.target.value);setTextIf('voiceRateValue',voiceRate.toFixed(2));jarvisSaveVoiceSettings();});
+  bind('voicePitch','input',e=>{voicePitch=Number(e.target.value);setTextIf('voicePitchValue',voicePitch.toFixed(2));jarvisSaveVoiceSettings();});
+  bind('voiceVolume','input',e=>{voiceVolume=Math.min(1,Math.max(0,Number(e.target.value)||0));voiceGuideEnabled=voiceVolume>0;setTextIf('voiceVolumeValue',`${Math.round(voiceVolume*100)}%`);jarvisUpdateVoiceButton();jarvisSaveVoiceSettings();});
