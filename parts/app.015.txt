@@ -10,25 +10,14 @@
     result.status='INVALID_POINTS';result.blocked=true;result.reason='ルート座標が不正です';
     jarvisRouteIntegrity=result;return result;
   }
-  // Route-request truth: the position jarvisComputeRoute() actually built THIS route from.
-  // Always set alongside routeCandidates/routeData (see jarvisComputeRoute), so this is the
-  // primary basis for judging the route's own integrity.
   const requestOrigin=routeLastOrigin?{lat:routeLastOrigin.latitude,lng:routeLastOrigin.longitude}:null;
-  // Live vehicle position: separate, diagnostic-only evidence. The rider may have moved since
-  // the route was computed; that says something about whether they're currently ON the route's
-  // start, not about whether the route itself is valid.
   const liveOrigin=(typeof currentLat==='number'&&typeof currentLon==='number')?{lat:currentLat,lng:currentLon}:null;
-  // Fall back to live position only when routeLastOrigin genuinely isn't available (e.g. a route
-  // restored from a snapshot that didn't carry it) — never prefer it over route-request truth.
   const origin=requestOrigin||liveOrigin;
 
   if(origin)result.startDistance=haversine({latitude:origin.lat,longitude:origin.lng},{latitude:startPt.lat,longitude:startPt.lng});
-  if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});
+  if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});
   if(liveOrigin)result.liveOriginDistance=haversine({latitude:liveOrigin.lat,longitude:liveOrigin.lng},{latitude:startPt.lat,longitude:startPt.lng});
 
-  // Forward-vs-reverse orientation sanity: a route whose END is actually near where we ARE,
-  // and whose START is near where we're GOING, is very likely backwards. Judged against
-  // route-request truth (`origin`), not live position, for the same reason as above.
   if(origin&&destination){
     const startToDest=haversine({latitude:startPt.lat,longitude:startPt.lng},{latitude:destination.lat,longitude:destination.lon});
     const endToOrigin=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:origin.lat,longitude:origin.lng});
@@ -48,11 +37,6 @@
     result.status='OK';result.blocked=false;result.reason='';
   }
 
-  // Live-position mismatch: non-blocking evidence that the rider isn't at the route's start
-  // right now (they may simply have moved since computing it). Only surfaced when it's
-  // MEANINGFULLY worse than the route-request-truth distance already computed above — otherwise
-  // this is just restating the same number a second time when requestOrigin was unavailable and
-  // liveOrigin was already used as `origin`.
   if(!result.blocked && Number.isFinite(result.liveOriginDistance) && result.liveOriginDistance>80 &&
      (!Number.isFinite(result.startDistance) || result.liveOriginDistance>result.startDistance+40)){
     const moveNote=`現在地がルート起点から${Math.round(result.liveOriginDistance)}m離れています（計算後に移動した可能性）`;
@@ -73,7 +57,6 @@ function jarvisStartNavigation(){
       return;
     }
     if(integrity.status==='WARN')jarvisSetStatus(`注意：${integrity.reason}`,'warn');
-    // START直前まで走っていた候補取得リクエストを無効化。遅れて返った応答が走行状態を解除するのを防ぐ。
     routeRequestSeq++;
     navSessionStarted=true;
   jarvisBlurTextInputs();routePreviewActive=false;navMapFollow=true;navMapUserMoved=false;jarvisExitDeviationEscape();jarvisResetAutoRerouteWatch();jarvisSyncTrafficLayers();
@@ -84,7 +67,6 @@ function jarvisStartNavigation(){
     jarvisResetVoiceProgress();
     jarvisClearRouteLabels();jarvisRenderRoute();jarvisUpdateMapStartButton();
     if(voiceGuideEnabled)jarvisSpeak('音声案内を開始します',true);
-    // Google Maps風：走行開始時は現在地へ寄り、進行方向の先が見やすい縮尺へ。
     if(typeof currentLat==='number'&&typeof currentLon==='number'){
       navGoogleMap?.setCenter({lat:currentLat,lng:currentLon});
       navGoogleMap?.setZoom(18);
@@ -103,13 +85,10 @@ async function jarvisStopRouteNavigation(){
   jarvisResetVoiceProgress();
   jarvisUpdateMapStartButton();
   jarvisSetStatus('現在地から最速ルートを再計算中…');
-  // GPS計測自体は継続し、現在位置から候補を取り直す。
   await jarvisComputeRoute(true);
 }
 function jarvisRenderRoute(){
   const colors=['#238cff','#72d2ff','#8ee6a8'];
-
-  // 古い線は毎回すべて破棄。createPolylines由来の分割線も残さない。
   navAltRouteLines.forEach(x=>{
     try{x?.setMap?.(null)}catch(e){}
     try{x?.remove?.()}catch(e){}
@@ -117,68 +96,37 @@ function jarvisRenderRoute(){
   navAltRouteLines=[];
   if(navRouteLine){try{navRouteLine.setMap(null)}catch(e){}navRouteLine=null;}
   jarvisClearRouteLabels();
-
   if(routePreviewActive&&!navSessionStarted&&routeCandidates.length)jarvisComputeRouteLabelPoints();
-
   if(navGoogleMap&&routeCandidates.length){
     if(navSessionStarted){
-      // START後は「選択中ルート1本」だけ。
       const r=routeCandidates[selectedRouteIndex]||routeData;
       if(r?.path?.length){
-        navRouteLine=new google.maps.Polyline({
-          map:navGoogleMap,
-          path:r.path,
-          strokeColor:'#238cff',
-          strokeOpacity:.98,
-          strokeWeight:11,
-          zIndex:20,
-          clickable:false
-        });
+        navRouteLine=new google.maps.Polyline({map:navGoogleMap,path:r.path,strokeColor:'#238cff',strokeOpacity:.98,strokeWeight:11,zIndex:20,clickable:false});
         navAltRouteLines=[navRouteLine];
       }
     }else{
-      // START前だけ候補3本を表示。1候補につきPolylineは1本。
       routeCandidates.forEach((r,i)=>{
         if(!r?.path?.length)return;
         const selected=i===selectedRouteIndex;
-        const line=new google.maps.Polyline({
-          map:navGoogleMap,
-          path:r.path,
-          strokeColor:colors[i]||'#72d2ff',
-          strokeOpacity:selected?.98:.76,
-          strokeWeight:selected?11:7,
-          zIndex:selected?16:10-i,
-          clickable:true
-        });
+        const line=new google.maps.Polyline({map:navGoogleMap,path:r.path,strokeColor:colors[i]||'#72d2ff',strokeOpacity:selected?.98:.76,strokeWeight:selected?11:7,zIndex:selected?16:10-i,clickable:true});
         line.addListener('click',()=>jarvisSelectRoute(i));
         navAltRouteLines.push(line);
         if(routePreviewActive)navRouteLabels.push(jarvisCreateRouteLabel(navGoogleMap,r,i));
       });
     }
   }
-
   if(landGoogleMap&&routeData?.path?.length){
     if(landRouteLine){try{landRouteLine.setMap(null)}catch(e){}landRouteLine=null;}
-    landRouteLine=new google.maps.Polyline({
-      map:landGoogleMap,
-      path:routeData.path,
-      strokeColor:colors[selectedRouteIndex]||'#238cff',
-      strokeOpacity:.94,
-      strokeWeight:10,
-      zIndex:12
-    });
+    landRouteLine=new google.maps.Polyline({map:landGoogleMap,path:routeData.path,strokeColor:colors[selectedRouteIndex]||'#238cff',strokeOpacity:.94,strokeWeight:10,zIndex:12});
   }
-
   if(navSessionStarted&&jarvisDeviationEscape)jarvisSetRouteGuidanceAppearance(false);
   if(routePreviewActive&&!navSessionStarted)jarvisFitRoutePreview();
-  // START後はfitBounds禁止。motion engineがzoom 18で現在位置を追従。
   jarvisUpdateMapStartButton();
   if(mapViewMode==='3D')jarvisApplyVector3D();
 }
 
 
 function jarvisRoutePointDistanceMeters(lat,lon,a,b){
-  // Local equirectangular projection is accurate enough for short route segments.
   const R=6371000, rad=Math.PI/180;
   const lat0=lat*rad, cos=Math.cos(lat0);
   const ax=(a.lng-lon)*rad*cos*R, ay=(a.lat-lat)*rad*R;
@@ -194,7 +142,6 @@ function jarvisDistanceFromActiveRoute(lat,lon){
   const path=(routeCandidates[selectedRouteIndex]||routeData)?.path||[];
   if(path.length<2)return Infinity;
   let best=Infinity;
-  // Full scan is acceptable for current route sizes; no network request is involved.
   for(let i=1;i<path.length;i++){
     const d=jarvisRoutePointDistanceMeters(lat,lon,path[i-1],path[i]);
     if(d<best)best=d;
