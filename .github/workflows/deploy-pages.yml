@@ -1,0 +1,66 @@
+name: Deploy JARVIS Road Test
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble road-test site
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+          mapfile -d '' appfiles < <(find parts -maxdepth 1 -type f -name 'app.*.txt' -print0 | sort -z)
+          : > _site/app.js
+          for ((i=0; i<${#appfiles[@]}; i++)); do
+            cat "${appfiles[$i]}" >> _site/app.js
+            if (( i < ${#appfiles[@]} - 1 )); then printf '\n' >> _site/app.js; fi
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('_site/app.js')
+          s=p.read_text()
+          bad="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
+          good="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
+          s=s.replace(bad,good,1)
+          p.write_text(s)
+          PY
+          mapfile -d '' htmlfiles < <(find site-parts -maxdepth 1 -type f -name 'index.*.html' -print0 | sort -z)
+          : > _site/index.html
+          for ((i=0; i<${#htmlfiles[@]}; i++)); do
+            cat "${htmlfiles[$i]}" >> _site/index.html
+            if (( i < ${#htmlfiles[@]} - 1 )); then printf '\n' >> _site/index.html; fi
+          done
+          cp app.css road-test-ui.js _site/
+          touch _site/.nojekyll
+          node --check _site/app.js
+          node --check _site/road-test-ui.js
+          test -s _site/index.html
+          grep -q 'v6.14.47-ROADTEST-20260903T233900Z' _site/index.html
+          echo "assembled_app_blob=$(git hash-object _site/app.js)"
+          echo "JARVIS_SITE_BUILD_OK"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
