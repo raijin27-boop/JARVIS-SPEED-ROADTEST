@@ -1,0 +1,200 @@
+  }else if(destination){jarvisApplyMapOrientation(map,which);map.setCenter({lat:destination.lat,lng:destination.lon});jarvisEnsureDestMarker(map,which).setPosition({lat:destination.lat,lng:destination.lon})}
+}
+function jarvisSyncMaps(force=false){
+  if(!jarvisMapsReady)return;
+  jarvisSyncOneMap(navGoogleMap,navSquidOverlay,'nav',force); jarvisSyncOneMap(landGoogleMap,landSquidOverlay,'land',force);
+  if(mapViewMode==='3D')jarvisApplyVector3D();
+}
+function jarvisResizeMaps(){
+  if(!(window.google&&google.maps))return;
+  [navGoogleMap,landGoogleMap].forEach(m=>{if(m){google.maps.event.trigger(m,'resize');if(typeof currentLat==='number' && (m!==navGoogleMap||(!jarvisRoutePreviewOwnsViewport()&&navMapFollow)))m.setCenter({lat:currentLat,lng:currentLon})}});
+}
+
+function updateStats(){
+  const ms=elapsedMs();
+  $('elapsed').textContent=fmtTime(ms);
+  $('distance').textContent=(totalDistanceM/1000).toFixed(2);
+  const avg=ms>0?(totalDistanceM/1000)/(ms/3600000):0;
+  $('avgSpeed').textContent=Math.round(avg)
+}
+
+function setDiag(id,text,kind=''){const el=$(id);el.textContent=text;el.className=kind?`diag-${kind}`:''}
+function diagMsg(text,kind=''){const el=$('diagMessage');el.textContent=text;el.className='diag-msg'+(kind?` ${kind}`:'')}
+
+async function requestWakeLock(){
+  if(!('wakeLock' in navigator)){
+    $('wakeState').textContent='画面保持 非対応';setDiag('wakeDiag','非対応','warn');return;
+  }
+  try{
+    if(wakeLock) return;
+    wakeLock=await navigator.wakeLock.request('screen');
+    $('wakeState').textContent='画面保持 ON';$('wakeState').className='wake ok';setDiag('wakeDiag','ON','ok');
+    jarvisRoadTestNoteLifecycle('WAKE_LOCK_ON',{});
+    wakeLock.addEventListener('release',()=>{wakeLock=null;$('wakeState').textContent='画面保持 OFF';$('wakeState').className='wake';setDiag('wakeDiag','OFF','warn');jarvisRoadTestNoteLifecycle('WAKE_LOCK_RELEASED',{});});
+  }catch(e){$('wakeState').textContent='画面保持 取得失敗';setDiag('wakeDiag','取得失敗','warn')}
+}
+async function releaseWakeLock(){
+  if(wakeLock){try{await wakeLock.release()}catch(e){}wakeLock=null}
+  $('wakeState').textContent='画面保持 OFF';$('wakeState').className='wake';setDiag('wakeDiag','OFF','')
+}
+
+function jarvisIsNavVisible(){
+  const panel=$('navPanel');
+  return !!panel && !panel.classList.contains('hidden') && document.body.classList.contains('nav-mode');
+}
+function jarvisLocationTrackingWanted(){
+  return jarvisIsNavVisible() || running || navSessionStarted;
+}
+function jarvisEnsureLocationTracking(showMessage=false){
+  if(!window.isSecureContext){
+    if(showMessage)setTextIf('navMapState','HTTPSが必要');
+    return false;
+  }
+  if(!navigator.geolocation){
+    if(showMessage)setTextIf('navMapState','位置情報 非対応');
+    return false;
+  }
+  if(watchId===null){
+    try{
+      startWatch();
+      jarvisLocationTrackingActive=true;
+      setDiag('gpsState','追跡中','ok');
+      if(showMessage)setTextIf('navMapState','現在地を追跡中');
+    }catch(e){
+      jarvisLocationTrackingActive=false;
+      if(showMessage)setTextIf('navMapState','位置追跡を開始できません');
+      return false;
+    }
+  }else jarvisLocationTrackingActive=true;
+  return true;
+}
+function jarvisStopLocationTrackingIfIdle(){
+  if(jarvisLocationTrackingWanted())return;
+  if(watchId!==null){
+    navigator.geolocation.clearWatch(watchId);
+    watchId=null;
+  }
+  jarvisLocationTrackingActive=false;
+}
+async function jarvisSyncWakeLock(){
+  if(document.visibilityState!=='visible')return;
+  if(jarvisIsNavVisible() || running) await requestWakeLock();
+  else await releaseWakeLock();
+}
+
+async function refreshDiagnostics(){
+  setDiag('secureState',window.isSecureContext?'OK':'NG',window.isSecureContext?'ok':'bad');
+  setDiag('apiState',navigator.geolocation?'利用可能':'利用不可',navigator.geolocation?'ok':'bad');
+  if(!navigator.geolocation){setDiag('permState','確認不可','bad');diagMsg('このブラウザでは位置情報APIが利用できません。','bad');return}
+  if(navigator.permissions&&navigator.permissions.query){
+    try{
+      const p=await navigator.permissions.query({name:'geolocation'});
+      setDiag('permState',p.state,p.state==='granted'?'ok':p.state==='denied'?'bad':'warn');
+      p.onchange=()=>setDiag('permState',p.state,p.state==='granted'?'ok':p.state==='denied'?'bad':'warn');
+    }catch(e){setDiag('permState','Safariでは取得不可','warn')}
+  }else setDiag('permState','Safariでは取得不可','warn')
+}
+
+function beginTimer(){
+  if(running)return;
+  running=true;startTime=Date.now();timerId=setInterval(updateStats,500);
+  $('status').textContent='計測中';$('status').className='status ok';syncLandscapeStatus();
+  $('startBtn').disabled=true;$('stopBtn').disabled=false;
+  requestWakeLock()
+}
+
+function enterResumeGuard(){
+  resumeGuardUntil=Date.now()+RESUME_GUARD_MS;goodSamplesAfterResume=0;lastPos=null;lastAcceptedSpeed=0;currentSpeedKmh=0;
+  $('speed').textContent='0';
+  if(running){$('status').textContent='GPS再同期中';$('status').className='status';syncLandscapeStatus();setDiag('gpsState','再同期中','warn');diagMsg('画面復帰後のGPSを再同期しています。異常速度は統計から除外します。','warn')}
+  jarvisRoadTestNoteLifecycle('APP_RESUME',{});
+}
+
+function filteredSpeed(rawSpeed,pos,c){
+  let sp=rawSpeed;if(sp===null||!isFinite(sp)||sp<0)sp=null;
+  let dt=null,d=null;
+  if(lastPos){
+    dt=(pos.timestamp-lastPos.timestamp)/1000;d=haversine(lastPos.coords,c);
+    if((sp===null||!isFinite(sp))&&dt>.5&&dt<10)sp=(d/dt)*3.6;
+  }
+  if(sp===null||!isFinite(sp))sp=0;
+  if(sp>MAX_REASONABLE_SPEED)return{speed:0,accepted:false,reason:'速度上限超過',dt,d};
+  if(c.accuracy>MAX_ACCEPTABLE_ACCURACY)return{speed:Math.min(sp,MAX_REASONABLE_SPEED),accepted:false,reason:'GPS精度低下',dt,d};
+  if(Date.now()<resumeGuardUntil||goodSamplesAfterResume<2){goodSamplesAfterResume++;return{speed:sp<1.2?0:sp,accepted:false,reason:'再同期中',dt,d}}
+  if(dt&&dt>0&&dt<5){
+    const accel=Math.abs(sp-lastAcceptedSpeed)/dt;
+    if(accel>MAX_ACCEL_KMH_PER_SEC)return{speed:lastAcceptedSpeed,accepted:false,reason:'急変除外',dt,d};
+  }
+  return{speed:sp<1.2?0:sp,accepted:true,reason:'',dt,d}
+}
+
+function updateNav(){
+  if(!destination||currentLat===null||currentLon===null){
+    $('navDistance').textContent='-- km'; setTextIf('landDistance','-- km'); setTextIf('landDistance','-- km');
+    const msg=destination?'GPS待機中':'目的地を検索してください';
+    setTextIf('navBearingText',msg); setTextIf('landBearing',msg);
+    setTextIf('landName',destination?.name||'目的地未設定');
+    jarvisSyncMaps();
+    return;
+  }
+  const d=haversine({latitude:currentLat,longitude:currentLon},{latitude:destination.lat,longitude:destination.lon});
+  const b=bearing(currentLat,currentLon,destination.lat,destination.lon);
+  let hdg=null;
+  if(typeof currentHeading==='number' && isFinite(currentHeading)) hdg=currentHeading;
+
+  const distText=d<1000?`${Math.round(d)} m`:`${(d/1000).toFixed(d<10000?1:0)} km`;
+  if(navMode==='ADVENTURE'||!routeData){$('navDistance').textContent=distText; setTextIf('landDistance',distText);setTextIf('routeEta',navMode==='ROUTE'?'ルート取得中…':'方角ナビ');}
+  setTextIf('navName',destination.name||'目的地'); setTextIf('landName',destination.name||'目的地'); setTextIf('landName',destination.name||'目的地');
+  if(hdg===null){
+    const txt=`目的地方位 ${Math.round(b)}°（北基準）`;
+    setTextIf('navBearingText',txt); setTextIf('landBearing',txt);
+    setTextIf('headingState','進行方向 --°');
+  }else{
+    const rel=normalize180(b-hdg);
+    const txt=`目的地方向 ${rel>15?'右':rel<-15?'左':'前方'} ${Math.abs(Math.round(rel))}°`;
+    setTextIf('navBearingText',txt); setTextIf('landBearing',txt);
+    setTextIf('headingState',`進行方向 ${Math.round(hdg)}°`);
+  }
+  jarvisSyncMaps();
+}
+// ===== v6.14.46 ROAD TEST telemetry (disabled by default; pure observer) =====
+//
+// A bounded, in-memory recorder for a real-iPhone/real-GPS/real-Google-Maps road test, per
+// NEXT_BATCH_v6.14.46_REAL_ROAD_TEST.md. Completely inert unless `jarvisRoadTestStart()` is
+// called (the road-test build's bootstrap does this; the normal app/manual-check/simulator
+// builds never do, so this section changes nothing about their behavior). Every hook below is a
+// pure READ of state that already exists elsewhere in this file — it never writes
+// jarvisFreeMotion/jarvisMotion/navigation state, so it cannot become a new vehicle-position or
+// route-progress authority (exercised directly by test/telemetry-tests.mjs).
+let jarvisRoadTestEnabled=false;
+let jarvisRoadTestSessionId=null;
+let jarvisRoadTestSessionStartedAt=0;
+let jarvisRoadTestBuffer=null;
+let jarvisRoadTestMarkers=[];
+let jarvisRoadTestErrors=[];
+let jarvisRoadTestRejectedFixCount=0;
+let jarvisRoadTestVoiceEventsSeen=0;
+// Per-fix change-detection state, reset on every jarvisRoadTestStart()/jarvisRoadTestClearSession().
+let jarvisRoadTestLastState=null;
+let jarvisRoadTestLastGuidanceKind=null;
+let jarvisRoadTestLastProjectionS=null;
+let jarvisRoadTestLastDisplayPos=null;
+let jarvisRoadTestLastDeviationEscape=false;
+let jarvisRoadTestLastPendingRejoin=false;
+let jarvisRoadTestLastRouteLastAt=0;
+
+const JARVIS_ROAD_TEST_CAPACITY=4000; // ~60-110 min at a 1-2s real GPS update rate, with margin
+const JARVIS_ROAD_TEST_MARKER_CAPACITY=300;
+const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
+// road-test/build-artifact.mjs injects window.__JARVIS_ROAD_TEST_BUILD_ID (a per-build timestamp
+// stamp) as an inline <script> before this file, so every fresh build/publish is distinguishable
+// in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
+// concretely, without needing a separate versioned JS filename for a file that is inlined into
+// one self-contained HTML document rather than fetched separately (see road-test/README.md).
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.46-ROADTEST-dev';
+
+// Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
+// unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
+// until the shift happens). toArray() re-linearizes to chronological order for export/tests only.
+function jarvisRoadTestCreateRingBuffer(capacity){
+  return{
