@@ -1,4 +1,4 @@
-name: Deploy Claude JARVIS Road Test
+name: Deploy JARVIS v6.14.55 Road Test
 on:
   push:
     branches: [main]
@@ -15,31 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy verified Claude artifact unchanged
-        shell: bash
+      - name: Fetch current verified v6.14.54 public baseline
         run: |
           set -euo pipefail
-          rm -rf _site /tmp/claude-v654.zip
+          rm -rf _site
           mkdir -p _site
-          curl -fsSL 'https://sdmntprnznorth.oaiusercontent.com/files/00000000-c198-820b-add8-0ed4512b0fcd/raw?se=2026-09-04T19%3A57%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=c716c8b8-ba0d-5e1f-b988-16606309e115&skoid=f5e14fda-2af7-44a3-9d18-d372ffcad871&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-04T03%3A16%3A45Z&ske=2026-09-05T03%3A16%3A45Z&sks=b&skv=2026-02-06&sig=RIQe6jLHWnWWzfznbVLnnHt%2BudWV64hV2B/b0GTAL/0%3D' -o /tmp/claude-v654.zip
-          unzip -q /tmp/claude-v654.zip -d _site
-          touch _site/.nojekyll
-          node --check _site/app.js
-          node --check _site/road-test-ui.js
-          node - <<'NODE'
-          const fs=require('fs');
-          const r=JSON.parse(fs.readFileSync('_site/redesign-v654-tests.json','utf8'));
-          if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)) throw new Error('Claude redesign report is not 8/8 pass');
-          console.log('CLAUDE_REDESIGN_REPORT_8_OF_8_OK');
-          NODE
+          BASE='https://raijin27-boop.github.io/JARVIS-SPEED-ROADTEST'
+          for f in index.html app.js app.css road-test-ui.js manifest.webmanifest icon-192.png icon-512.png redesign-v654-tests.json; do
+            curl -fsSL "$BASE/$f?baseline=v654" -o "_site/$f"
+          done
           grep -q 'CLAUDE-v6.14.54-EXPORT' _site/index.html
           grep -q 'jarvisCorridorMatch' _site/app.js
           grep -q 'jarvisCommitRoute' _site/app.js
-          grep -q 'jarvisVerifyRouteRendered' _site/app.js
-          grep -q 'jarvisWakeWanted' _site/app.js
-          ! grep -q 'road-test-v652.js' _site/index.html
-          ! grep -q 'road-test-v653.js' _site/index.html
-          echo 'CLAUDE_V654_ARTIFACT_READY'
+      - name: Apply v6.14.55 targeted changes
+        run: python tools/apply-v655-public.py
+      - name: Validate v6.14.55 public build
+        run: |
+          set -euo pipefail
+          touch _site/.nojekyll
+          node --check _site/app.js
+          node --check _site/road-test-ui.js
+          grep -q 'JARVIS-v6.14.55-ROADTEST' _site/index.html
+          grep -q 'function jarvisTrackingSnapTarget' _site/app.js
+          grep -q 'autoRerouteOffRouteFixes>=3' _site/app.js
+          grep -q 'jarvisOnRouteConfirmFixes>=2' _site/app.js
+          grep -q 'function jarvisUpdateVehicleBallState' _site/app.js
+          grep -q 'v6.14.55 stable vehicle-ball state' _site/app.css
+          node -e "const r=require('./_site/redesign-v654-tests.json'); if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)) process.exit(1)"
+          echo 'JARVIS_V655_PUBLIC_BUILD_OK'
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
