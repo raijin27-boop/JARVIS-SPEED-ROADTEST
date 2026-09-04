@@ -1,0 +1,200 @@
+    routeIntegrityWarnCount:events.filter(e=>e.routeIntegrityStatus==='WARN').length,
+    routeIntegrityBlockCount:events.filter(e=>['CORRUPT','REVERSED','NO_ROUTE','INVALID_POINTS'].includes(e.routeIntegrityStatus)).length
+  };
+}
+
+function jarvisRoadTestExport(){
+  const events=jarvisRoadTestBuffer?jarvisRoadTestBuffer.toArray():[];
+  const route=(typeof routeCandidates!=='undefined'?(routeCandidates[selectedRouteIndex]||routeData):null);
+  return{
+    buildId:JARVIS_ROAD_TEST_BUILD_ID,
+    exportedAt:new Date().toISOString(),
+    userAgent:typeof navigator!=='undefined'?navigator.userAgent:null,
+    session:{id:jarvisRoadTestSessionId,startedAt:jarvisRoadTestSessionStartedAt?new Date(jarvisRoadTestSessionStartedAt).toISOString():null,endedAt:new Date().toISOString()},
+    destination:(typeof destination!=='undefined'&&destination)?{lat:destination.lat,lon:destination.lon,name:destination.name||null}:null,
+    routeSummary:route?{distanceMeters:route.distanceMeters,durationMillis:route.durationMillis,pathLength:Array.isArray(route.path)?route.path.length:0}:null,
+    routeIntegrity:(typeof jarvisRouteIntegrity!=='undefined')?{...jarvisRouteIntegrity}:null,
+    // v6.14.47: Maps/geolocation hosting diagnostics — mapsDetail/mapsOrigin are fixed,
+    // key-free explanation text (see jarvisSetHostDiag), never the API key itself.
+    hostDiag:(typeof jarvisHostDiag!=='undefined')?{...jarvisHostDiag}:null,
+    events,
+    markers:jarvisRoadTestMarkers.slice(),
+    voiceEvents:(window.__jarvisVoiceEvents||[]).slice(),
+    errors:jarvisRoadTestErrors.slice(),
+    summary:jarvisRoadTestSummary(events)
+  };
+}
+// Global uncaught-error capture: only *records* into the road-test error log when road-test mode
+// is on (the check is inside the handler, so registering this listener unconditionally costs
+// nothing when road test mode is off — it just never has anything to do). Catches exceptions
+// jarvisRoadTestRecordFix's own try/catch cannot see (e.g. inside jarvisMotionAcceptFix/
+// jarvisAutoRerouteUpdate, which run before jarvisRoadTestRecordFix in onPosition and are not
+// themselves wrapped in try/catch in normal production code).
+window.addEventListener('error',(e)=>{if(jarvisRoadTestEnabled)jarvisRoadTestLogError('window.onerror',e?.error||e?.message||e);});
+
+function onPosition(pos){
+  const c=pos.coords;
+  currentLat=c.latitude;currentLon=c.longitude; jarvisUpdateWeather();
+  // 進行↑は端末コンパスを使わず、GPSの移動軌跡から進行方位を自前計算。
+  // Safari/iPhoneで coords.heading が null でも動く。停止時は最後の有効方位を保持する。
+  const nowFix={latitude:c.latitude,longitude:c.longitude};
+  let derivedHeading=null;
+  if(courseLastFix){
+    const moved=haversine(courseLastFix,nowFix);
+    const dt=(pos.timestamp-courseLastAt)/1000;
+    // v6.14.18: a longer baseline prevents intersection GPS jitter from looking like
+    // repeated mini-turns. Update the anchor only after a meaningful displacement.
+    const minCourseMove=Math.max(5.0,Math.min(9.0,(Number(c.accuracy)||20)*.28));
+    if(c.accuracy<=MAX_ACCEPTABLE_ACCURACY && dt>0.55 && dt<12 && moved>=minCourseMove){
+      derivedHeading=bearing(courseLastFix.latitude,courseLastFix.longitude,c.latitude,c.longitude);
+    }
+  }
+  if(derivedHeading!==null){
+    const delta=Number.isFinite(currentHeading)?Math.abs(jarvisNorm180(derivedHeading-currentHeading)):0;
+    const gain=delta>35?.24:delta>18?.18:.12;
+    currentHeading=smoothHeading(currentHeading,derivedHeading,gain);
+    headingSource='COURSE';
+    courseLastFix=nowFix; courseLastAt=pos.timestamp;
+  }else if(typeof c.heading==='number' && isFinite(c.heading) && (c.speed===null || c.speed>1.0)){
+    currentHeading=smoothHeading(currentHeading,(c.heading+360)%360,0.16);
+    headingSource='GPS';
+    if(!courseLastFix){courseLastFix=nowFix;courseLastAt=pos.timestamp;}
+  }else if(!courseLastFix){
+    courseLastFix=nowFix; courseLastAt=pos.timestamp;
+  }
+
+  setDiag('gpsState','受信中','ok');
+  $('accuracy').textContent='GPS精度 ±'+Math.round(c.accuracy)+' m';
+
+  const raw=(typeof c.speed==='number'&&c.speed>=0)?c.speed*3.6:null;
+  const f=filteredSpeed(raw,pos,c);let sp=f.speed;
+
+  if(f.accepted){
+    if(lastPos&&f.dt&&f.dt>0&&f.dt<15&&f.d!==null){
+      const plausible=f.d<Math.max(35,(sp/3.6)*f.dt*2.8+12);
+      if(running&&sp>=2&&f.d>=1&&plausible)totalDistanceM+=f.d;
+    }
+    lastAcceptedSpeed=sp;currentSpeedKmh=sp;if(running)maxSpeedKmh=Math.max(maxSpeedKmh,sp);
+    diagMsg(`GPS受信成功：精度 ±${Math.round(c.accuracy)} m`,'ok');
+  }else{
+    currentSpeedKmh=sp;if(f.reason)diagMsg(`GPS受信中：${f.reason}（異常値は記録しません）`,'warn');
+    jarvisRoadTestNoteRejectedFix(f.reason);
+  }
+
+  $('speed').textContent=Math.round(sp); if($('navSpeed')) $('navSpeed').textContent=Math.round(sp); setTextIf('landSpeed',Math.round(sp)); $('maxSpeed').textContent=Math.round(maxSpeedKmh);
+  jarvisFreeAcceptFix(c.latitude,c.longitude,sp,c.accuracy);
+  jarvisMotionAcceptFix(c.latitude,c.longitude,sp,c.accuracy);
+  updateStats();updateNav();
+  // v6.14.7: START中は横ずれ＋進行方向＋継続fixで逸脱判定。
+  // Uターン案内を拒否して走り続けた場合は、進行方向を尊重して再リルートする。
+  if(Number.isFinite(currentHeading)&&sp>=5)jarvisLastMovingHeading=currentHeading;
+  jarvisUpdateViaVisited(c.latitude,c.longitude);
+  const arrivedNow=jarvisArrivalUpdate();
+  if(!arrivedNow){
+    jarvisAutoRerouteUpdate(c,sp);
+    jarvisVoiceGuideUpdate();
+  }
+  lastPos={coords:{latitude:c.latitude,longitude:c.longitude},timestamp:pos.timestamp};
+  jarvisRoadTestRecordFix(c,sp);
+}
+
+function onError(err){
+  starting=false;
+  const map={1:'位置情報が拒否されました',2:'現在地を取得できません',3:'GPS取得がタイムアウトしました'};
+  const msg=map[err.code]||`GPSエラー (${err.code})`;
+  if(err.code===1)jarvisSetGeoDiag('GEOLOCATION_PERMISSION_DENIED');
+  setDiag('gpsState','エラー','bad');diagMsg(`${msg}${err.message?`：${err.message}`:''}`,'bad');
+  $('status').textContent=msg;$('status').className='status bad';syncLandscapeStatus();$('startBtn').disabled=false;$('stopBtn').disabled=true;refreshDiagnostics();
+}
+
+function startWatch(){
+  if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+  watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:0,timeout:20000});
+  jarvisLocationTrackingActive=true;
+}
+
+function startGPS(){
+  if(starting||running)return;
+  refreshDiagnostics();
+  if(!window.isSecureContext){$('status').textContent='HTTPSが必要';$('status').className='status bad';syncLandscapeStatus();diagMsg('HTTPSではないためGPSを利用できません。','bad');return}
+  if(!navigator.geolocation){jarvisSetGeoDiag('GEOLOCATION_UNAVAILABLE');$('status').textContent='GPS非対応';$('status').className='status bad';syncLandscapeStatus();return}
+  starting=true;$('startBtn').disabled=true;setDiag('gpsState','取得要求中','warn');diagMsg('iPhoneへ位置情報を要求しています…','warn');$('status').textContent='GPS待機中';$('status').className='status';syncLandscapeStatus();
+  navigator.geolocation.getCurrentPosition(pos=>{starting=false;jarvisSetGeoDiag('OK');enterResumeGuard();onPosition(pos);beginTimer();startWatch()},onError,{enableHighAccuracy:true,maximumAge:0,timeout:20000});
+}
+
+async function stopGPS(){
+  if(running){elapsedBefore+=Date.now()-startTime;startTime=null;running=false;clearInterval(timerId);timerId=null;updateStats()}
+  jarvisStopLocationTrackingIfIdle();
+  $('status').textContent=jarvisIsNavVisible()?'現在地追跡中':'一時停止';$('status').className='status';syncLandscapeStatus();setDiag('gpsState',watchId!==null?'追跡中':'停止中',watchId!==null?'ok':'');$('startBtn').disabled=false;$('stopBtn').disabled=true;await jarvisSyncWakeLock();
+}
+
+async function resetTrip(){
+  if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null}
+  running=false;starting=false;if(timerId)clearInterval(timerId);timerId=null;
+  startTime=null;elapsedBefore=0;lastPos=null;totalDistanceM=0;maxSpeedKmh=0;currentSpeedKmh=0;lastAcceptedSpeed=0;resumeGuardUntil=0;goodSamplesAfterResume=0;
+  currentHeading=null;headingSource='--';courseLastFix=null;courseLastAt=0;jarvisMotionReset();
+  $('speed').textContent='0'; if($('navSpeed')) $('navSpeed').textContent='0'; setTextIf('landSpeed','0'); $('maxSpeed').textContent='0';$('avgSpeed').textContent='0';$('distance').textContent='0.00';$('elapsed').textContent='00:00';$('accuracy').textContent='GPS精度 -- m';
+  $('diff').textContent='--';$('errorRate').textContent='--';$('status').textContent='待機中';$('status').className='status';syncLandscapeStatus();$('startBtn').disabled=false;$('stopBtn').disabled=true;
+  setDiag('gpsState','未開始','');diagMsg('STARTを押すと、GPS取得を試します。');await releaseWakeLock();refreshDiagnostics();updateNav();
+}
+
+function calcError(){
+  const meter=parseFloat($('meterInput').value),gps=currentSpeedKmh;
+  if(!isFinite(meter)||meter<=0){$('diff').textContent='入力して';$('errorRate').textContent='--';return}
+  const diff=meter-gps,rate=gps>0?(diff/gps)*100:NaN;
+  $('diff').textContent=(diff>=0?'+':'')+diff.toFixed(1)+' km/h';
+  $('errorRate').textContent=isFinite(rate)?((rate>=0?'+':'')+rate.toFixed(1)+'%'):'--';
+}
+
+
+
+function jarvisUpdateNavModeButtons(){
+  $('adventureModeBtn')?.classList.toggle('active',navMode==='ADVENTURE');
+  $('routeModeBtn')?.classList.toggle('active',navMode==='ROUTE');
+  setTextIf('routeEta',navMode==='ADVENTURE'?'方角ナビ':(routeData?jarvisRouteEtaText(routeData):'ルート待機'));
+  $('routeChoicePanel')?.classList.add('hidden');
+  jarvisUpdateMapStartButton();
+}
+function jarvisSetNavMode(mode){
+  navMode=mode==='ROUTE'?'ROUTE':'ADVENTURE';
+  localStorage.setItem('jarvisNavMode',navMode);jarvisUpdateNavModeButtons();jarvisSyncTrafficLayers();
+  if(navMode==='ROUTE') jarvisComputeRoute(true); else {jarvisHideRouteLines();updateNav();jarvisSyncMaps(true);}
+}
+function jarvisHideRouteLines(){
+  jarvisClearRouteLabels();
+  navRouteLine?.setMap(null);landRouteLine?.setMap(null);
+  navAltRouteLines.forEach(x=>x?.setMap(null)); navAltRouteLines=[];
+}
+function jarvisClearRoute(){
+  routeData=null;routeCandidates=[];selectedRouteIndex=0;routeLastOrigin=null;routeLastAt=0;routePreviewActive=false;navSessionStarted=false;jarvisAutoDeviationCount=0;jarvisOriginalRoutePath=[];
+  jarvisClearRouteLabels();jarvisHideRouteLines();navRouteLine=landRouteLine=null;
+  setTextIf('routeEta',navMode==='ROUTE'?'ルート待機':'方角ナビ');
+  const panel=$('routeChoicePanel'); if(panel){panel.innerHTML='';panel.classList.add('hidden');}
+  jarvisUpdateMapStartButton();
+}
+function jarvisRouteEtaText(r){
+  if(!r)return '-- 分 / --:--';
+  const min=Math.max(1,Math.round(r.durationMillis/60000));
+  const eta=new Date(Date.now()+r.durationMillis).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',hour12:false});
+  return `${min}分 / ${eta}着`;
+}
+function jarvisRouteDistanceText(r){
+  if(!r)return '--';
+  return r.distanceMeters<1000?`${Math.round(r.distanceMeters)} m`:`${(r.distanceMeters/1000).toFixed(r.distanceMeters<10000?1:0)} km`;
+}
+function jarvisRenderRouteChoices(){
+  // v3.9: 候補は地図上の色付きルート＋小型ラベルで直接選ぶ。STARTボタンも選択色と同期。
+  const panel=$('routeChoicePanel'); if(panel){panel.innerHTML='';panel.classList.add('hidden');}
+}
+function jarvisSelectRoute(i){
+  if(!routeCandidates[i])return;
+  selectedRouteIndex=i;routeData=routeCandidates[i];jarvisRenderRouteChoices();jarvisRenderRoute();
+  const km=jarvisRouteDistanceText(routeData);$('navDistance').textContent=km;setTextIf('landDistance',km);setTextIf('routeEta',jarvisRouteEtaText(routeData));
+  jarvisSetStatus(`ルート${i+1}を選択：${km} / ${jarvisRouteEtaText(routeData)}`,'ok');
+}
+function jarvisClearRouteLabels(){
+  navRouteLabels.forEach(o=>{try{o.setMap(null)}catch(e){}}); navRouteLabels=[];
+  window.jarvisRouteLabelPoints=[];
+}
+function jarvisComputeRouteLabelPoints(){
+  const routes=routeCandidates.filter(r=>r?.path?.length);
