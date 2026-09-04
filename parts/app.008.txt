@@ -1,0 +1,200 @@
+  const sharp=deg>=70,shallow=deg<38;
+  const before=sharp?14:(shallow?8:11);
+  const after=sharp?18:(shallow?10:14);
+  return{startS:Math.max(0,turn.startS-before),endS:Math.min(jarvisMotion.total,turn.endS+after),maxDistance:105,branch:false};
+}
+function jarvisUpdateTurnArrow(turn){
+ if(!navGoogleMap||jarvisDeviationEscape||jarvisNavTrackingState==='REROUTING'){jarvisClearTurnArrow();return;}
+ const win=jarvisTurnArrowWindow(turn);
+ if(!turn||!win||turn.distance>win.maxDistance||jarvisMotion.displayS>win.endS+3){jarvisClearTurnArrow();return;}
+ const pts=[],s0=win.startS,s1=win.endS;
+ const count=Math.max(12,Math.min(48,Math.ceil((s1-s0)/1.7)));
+ for(let i=0;i<=count;i++){const p=jarvisMotionPointAtS(s0+(s1-s0)*(i/count));if(p)pts.push({lat:p.lat,lng:p.lng});}
+ if(pts.length<2){jarvisClearTurnArrow();return;}
+ const icons=[{icon:{path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:win.branch?5.8:5,strokeColor:'#fff',strokeWeight:2,fillColor:'#fff',fillOpacity:1},offset:'100%'}];
+ const weight=win.branch?7:6;
+ if(!jarvisTurnArrowLine)jarvisTurnArrowLine=new google.maps.Polyline({map:navGoogleMap,path:pts,strokeColor:'#fff',strokeOpacity:1,strokeWeight:weight,zIndex:100,clickable:false,icons});
+ else{jarvisTurnArrowLine.setOptions({path:pts,strokeWeight:weight,icons});jarvisTurnArrowLine.setMap(navGoogleMap);}
+}
+
+function jarvisMotionAcceptFix(lat,lon,speedKmh,accuracyM){
+  if(!navSessionStarted||navMode!=='ROUTE')return;
+  const pr=jarvisMotionProject(lat,lon);
+  const now=performance.now();
+  jarvisMotion.lastFixAt=now;
+  jarvisMotion.speedMps=Math.max(0,Math.min(45,(Number(speedKmh)||0)/3.6));
+
+  // v6.14.7: Google-style separation of concerns. Location display and rerouting are
+  // independent. A suspicious projection may temporarily give the squid to real GPS,
+  // but it MUST NOT enter the persistent reroute/deviation state by itself.
+  const acc=Number.isFinite(Number(accuracyM))?Number(accuracyM):99;
+  const routeH=pr?jarvisMotionHeadingAtS(pr.s):null;
+  const travel=jarvisTravelHeading();
+  const mismatch=(Number.isFinite(routeH)&&Number.isFinite(travel))?jarvisHeadingMismatch(travel,routeH):0;
+  const visualThreshold=Math.max(VISUAL_ESCAPE_MIN_M,Math.min(22,acc*.72));
+  // v6.14.13: "departure intent" pre-empts route projection. When the rider physically
+  // turns away from a straight route, the squid/camera must follow the rider BEFORE the
+  // lateral distance grows. This is display ownership only; reroute still needs evidence.
+  // v6.14.24 TURN GUARD: the original one-shot version could fire on a single fix during a
+  // legitimate sharp turn, where route tangent changes faster than GPS/course heading settles.
+  // Require BOTH a meaningful lateral separation AND a stronger heading mismatch, sustained for
+  // 2 consecutive fixes, before treating it as a departure. A hard lateral escape above
+  // visualThreshold (below) remains immediate, so a true departure is still caught quickly.
+  const departureLateralMin=Math.max(4.5,Math.min(7.5,acc*.45));
+  const departureHeadingMin=Math.max(VISUAL_ESCAPE_HEADING_DEG,50);
+  const departureCandidate=!!pr && Number(speedKmh)>=6 && mismatch>departureHeadingMin && pr.distance>departureLateralMin;
+  jarvisDepartureFixes=departureCandidate?jarvisDepartureFixes+1:0;
+  const departureIntent=jarvisDepartureFixes>=2;
+  jarvisMotionDiag.mismatch=mismatch;
+  jarvisMotionDiag.departureCandidate=departureCandidate;
+  jarvisMotionDiag.departureFixes=jarvisDepartureFixes;
+  jarvisMotionDiag.visualThreshold=visualThreshold;
+  const visuallyOff=!pr || (pr.distance>visualThreshold) || departureIntent;
+
+  if(jarvisDeviationEscape){
+    jarvisVisualGpsPriority=true;
+    jarvisVisualOnRouteFixes=0;
+
+    // v6.14.18: hard GPS-only isolation window after a confirmed departure.
+    // During these first five seconds, neither the old route nor a newly computed route
+    // may influence squid position, heading ownership, or rejoin counters. This mirrors
+    // Google's separation between continuous location updates and the REROUTING state.
+    if(Date.now() < jarvisDeviationGpsIsolationUntil){
+      jarvisPendingRouteRejoinFixes=0;
+      jarvisMotionStart();
+      return;
+    }
+
+    // v6.14.12: Google-style rejoin gate. A newly computed route is NOT allowed to
+    // take ownership of the squid merely because it exists. Real GPS keeps ownership
+    // until position + travel heading agree with the new route for consecutive fixes.
+    if(jarvisPendingRouteRejoin && pr){
+      const rejoinDist=Math.min(14,Math.max(7,acc*.55));
+      const headingOk=Number(speedKmh)<5 || mismatch<50;
+      const distanceOk=pr.distance<=rejoinDist;
+      if(distanceOk && headingOk) jarvisPendingRouteRejoinFixes++;
+      else jarvisPendingRouteRejoinFixes=0;
+
+      if(jarvisPendingRouteRejoinFixes>=4){
+        jarvisMotion.targetS=pr.s;
+        // Preserve the visible vehicle pose. Route motion takes ownership only after
+        // consecutive agreement, then catches up from the nearest displayed position.
+        // v6.14.45: reads the vehicle's current pose through the named VehiclePose interface
+        // (jarvisGetVehiclePose) instead of reaching into jarvisFreeMotion's fields directly —
+        // this is route projection CONSUMING VehiclePose, never writing it.
+        const vp=jarvisGetVehiclePose();
+        const visualPr=vp?jarvisMotionProject(vp.lat,vp.lng):null;
+        jarvisMotion.displayS=visualPr?visualPr.s:pr.s;
+        jarvisMotion.displayHeading=vp&&Number.isFinite(vp.heading)?vp.heading:jarvisMotionHeadingAtS(jarvisMotion.displayS);
+        jarvisMotion.lastProjection=pr;
+        // Do not reset the camera on route reacquisition. Blend from the wider off-route
+        // view back to the normal adaptive zoom and route heading instead.
+        jarvisSetRerouteCameraMode('REJOINING');
+        jarvisExitDeviationEscape();
+        jarvisNavTrackingState='TRACKING';
+        jarvisSetRouteGuidanceAppearance(true);
+        // v6.14.44 fix: `jarvisRenderTurnArrow` never existed (pre-existing v6.14.18 bug — the
+        // real function is `jarvisUpdateTurnArrow`). Because it was called as a bare identifier,
+        // `?.()` did not save it: referencing an undeclared binding throws a ReferenceError
+        // regardless. That exception aborted the REST of this onPosition() call every time a
+        // reroute rejoin succeeded — skipping jarvisArrivalUpdate/jarvisAutoRerouteUpdate/
+        // jarvisVoiceGuideUpdate and the lastPos update for that fix. This was a major
+        // contributor to PARALLEL's non-convergence and large single-step jumps: the exact
+        // moment ownership was supposed to hand back to route projection was also the moment
+        // processing silently broke.
+        jarvisUpdateTurnArrow(jarvisCurrentGuidanceEvent());
+        jarvisSetStatus('新しいルートに合流：案内を継続','ok');
+      }
+    }
+    jarvisMotionStart();
+    return;
+  }
+
+  if(visuallyOff){
+    jarvisVisualGpsPriority=true;
+    jarvisVisualOnRouteFixes=0;
+    jarvisMotionStart();
+    return;
+  }
+
+  // v6.14.13: do not let the old route immediately grab the squid back after a real turn.
+  // Require a tighter corridor + heading agreement for three consecutive fixes.
+  if(jarvisVisualGpsPriority){
+    const confidentlyOn=!!pr && pr.distance<Math.min(8,Math.max(4.5,acc*.40)) && (Number(speedKmh)<5 || mismatch<28);
+    if(confidentlyOn)jarvisVisualOnRouteFixes++; else jarvisVisualOnRouteFixes=0;
+    if(jarvisVisualOnRouteFixes<4){
+        jarvisMotionStart();
+      return;
+    }
+    jarvisVisualGpsPriority=false;
+    jarvisVisualOnRouteFixes=0;
+    if(pr){
+      jarvisMotion.targetS=pr.s;
+      // v6.14.45: same VehiclePose-consuming read as the rejoin branch above.
+      const vp=jarvisGetVehiclePose();
+      const visualPr=vp?jarvisMotionProject(vp.lat,vp.lng):null;
+      jarvisMotion.displayS=visualPr?visualPr.s:pr.s;
+      jarvisMotion.displayHeading=vp&&Number.isFinite(vp.heading)?vp.heading:jarvisMotionHeadingAtS(jarvisMotion.displayS);
+      jarvisMotion.lastProjection=pr;
+    }
+    // Preserve the camera pose when route projection regains ownership. Resetting the
+    // follow camera here produced the last visible 'warp' during ownership handoff.
+  }
+
+  if(pr){
+    const prevS=jarvisMotion.targetS;
+    // Tight progress corridor around bends/interchanges prevents a nearby future/previous segment
+    // from stealing the marker when road geometry folds back near itself.
+    if(Number.isFinite(prevS)&&Number(speedKmh)>=4){
+      const maxForward=Math.max(75,(Number(speedKmh)/3.6)*5.0+42);
+      if(pr.s<prevS-10)pr.s=prevS-10;
+      if(pr.s>prevS+maxForward)pr.s=prevS+maxForward;
+    }
+    jarvisMotion.targetS=pr.s;
+    jarvisMotion.lastProjection=pr;
+    if(!Number.isFinite(jarvisMotion.displayS)){
+      jarvisMotion.displayS=pr.s;
+      jarvisMotion.displayHeading=jarvisMotionHeadingAtS(pr.s);
+    }
+  }
+  jarvisMotionStart();
+}
+
+function jarvisMotionStart(){
+  if(jarvisMotion.raf)return;
+  jarvisMotion.lastFrameAt=performance.now();
+  const tick=(now)=>{
+    jarvisMotion.raf=requestAnimationFrame(tick);
+    // v6.14.44: projectionS is the single authoritative route-progress telemetry value.
+    // It always mirrors jarvisMotion.targetS, whichever code path last set it (normal
+    // progress, rejoin, or visual-priority reacquisition), so it can never drift out of
+    // sync the way a separately-maintained "selectedS" field previously did.
+    jarvisMotionDiag.projectionS=Number.isFinite(jarvisMotion.targetS)?jarvisMotion.targetS:null;
+    if(!navSessionStarted||navMode!=='ROUTE'||!navGoogleMap||!navMapFollow)return;
+    // Route progress continues independently of display-location ownership.
+    if(!jarvisMotionPreparePath())return;
+
+    const dt=Math.max(.001,Math.min(.08,(now-jarvisMotion.lastFrameAt)/1000));
+    jarvisMotion.lastFrameAt=now;
+
+    if(!Number.isFinite(jarvisMotion.targetS)||!Number.isFinite(jarvisMotion.displayS)){
+      const pr=(typeof currentLat==='number'&&typeof currentLon==='number')?jarvisMotionProject(currentLat,currentLon):null;
+      if(!pr)return;
+      jarvisMotion.targetS=pr.s;
+      jarvisMotion.displayS=pr.s;
+      jarvisMotion.lastFixAt=now;
+    }
+
+    // 次のGPS fixまで最大1.6秒だけ道路上を速度予測。
+    // 無制限に先走らないよう予測距離にも上限を置く。
+    const age=Math.max(0,(now-jarvisMotion.lastFixAt)/1000);
+    const predictSec=Math.min(1.6,age);
+    const predictM=Math.min(35,jarvisMotion.speedMps*predictSec);
+    let desiredS=Math.min(jarvisMotion.total,jarvisMotion.targetS+predictM);
+    // v6.14.14: do not visually drive around the route's corner before the rider does.
+    // If the predicted route bearing turns away from the real travel course, freeze route
+    // look-ahead near the latest GPS projection and wait for the physical turn.
+    const travelForPredict=jarvisTravelHeading();
+    if(Number.isFinite(travelForPredict)&&Number(currentSpeedKmh)>=5&&Number.isFinite(jarvisMotion.targetS)){
+      const predictedH=jarvisMotionHeadingAtS(desiredS);
+      if(jarvisHeadingMismatch(travelForPredict,predictedH)>28)
