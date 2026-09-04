@@ -27,11 +27,9 @@
       }
       if(candidates.some(x=>x.relevance>=700)) break;
     }
-    // Exact/name-containing matches outrank fuzzy nearby results. Distance breaks ties.
     candidates.sort((a,b)=>(b.relevance-a.relevance)||(a.distance-b.distance));
     const best=candidates[0];
     if(!best) throw new Error('候補が見つかりません');
-    // Avoid silently choosing a fuzzy unrelated result (e.g. a clinic for 東大寺).
     if(best.relevance<420) throw new Error('入力名に一致する地点が見つかりません');
     saveDestination({name:best.name,lat:best.lat,lon:best.lon});
     jarvisSetStatus(`目的地SET：${best.name}`,'ok');
@@ -62,13 +60,9 @@ async function jarvisSearchPlaces(){
 
   if(await jarvisSearchNearby(q,box)) return;
   nearbyPlaces=[]; jarvisClearNearbyMarkers();
-
-  // 通常の店名/施設名は、まず現在地に近いText Search結果を表示。
-  // 1件しかない場合もそこで終了せず、Autocompleteの関連候補を追加して選択肢を増やす。
   const hadNearest = await jarvisSearchTextNearest(q,box);
 
   try{
-    // New Places Autocomplete Data API when available.
     if (google.maps.places.AutocompleteSuggestion) {
       const req = {
         input: q,
@@ -76,9 +70,10 @@ async function jarvisSearchPlaces(){
         includedRegionCodes: ['jp'],
         language: 'ja'
       };
-      // Bias toward current GPS position without requiring it.
       if (typeof currentLat === 'number' && typeof currentLon === 'number') {
-        req.locationBias = {center:{lat:currentLat,lng:currentLon}, radius:15000};
+        // Google Autocomplete Data accepts a LatLngLiteral directly as locationBias.
+        // Circle-literal {center,radius} was rejected on the real iPhone build.
+        req.locationBias = {lat:currentLat,lng:currentLon};
         req.origin = {lat:currentLat,lng:currentLon};
       }
       const {suggestions} = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
@@ -95,15 +90,12 @@ async function jarvisSearchPlaces(){
       }
       jarvisSetStatus(`現在地優先で候補を表示中`,'ok');
       const renderedNames=new Set(Array.from(box.querySelectorAll('.place-result strong')).map(x=>(x.textContent||'').trim()));
-      let added=0;
       for (const suggestion of suggestions) {
         if(box.querySelectorAll('.place-result').length>=8) break;
         const pred = suggestion.placePrediction;
         if (!pred) continue;
         const title = pred.mainText?.text || pred.text?.text || q;
         const fullText = pred.text?.text || `${title} ${pred.secondaryText?.text||''}`;
-        // Text Searchで既に近距離候補がある時は、入力語を実際に含む候補だけ補足する。
-        // 例: 「東大寺」→ 東大寺大仏殿/南大門/二月堂などは許可、無関係な池や店舗は除外。
         if(hadNearest){
           const nq=q.replace(/[\s　]+/g,'').toLowerCase();
           const nf=fullText.replace(/[\s　]+/g,'').toLowerCase();
@@ -111,7 +103,6 @@ async function jarvisSearchPlaces(){
         }
         if(renderedNames.has(title.trim())) continue;
         renderedNames.add(title.trim());
-        added++;
         const btn = document.createElement('button');
         btn.className = 'place-result';
         const dm=Number(pred.distanceMeters);
@@ -142,14 +133,13 @@ async function jarvisSearchPlaces(){
       return;
     }
 
-    // Fallback for browsers/library versions exposing legacy AutocompleteService.
     const svc = new google.maps.places.AutocompleteService();
     svc.getPlacePredictions({
       input:q,
       componentRestrictions:{country:'jp'},
       sessionToken:jarvisSessionToken,
       ...(typeof currentLat==='number' && typeof currentLon==='number' ? {
-        locationBias:{center:{lat:currentLat,lng:currentLon},radius:15000}, origin:new google.maps.LatLng(currentLat,currentLon)
+        locationBias:{lat:currentLat,lng:currentLon}, origin:new google.maps.LatLng(currentLat,currentLon)
       } : {})
     }, (preds,status)=>{
       if(status!==google.maps.places.PlacesServiceStatus.OK || !preds?.length){
@@ -178,7 +168,6 @@ async function jarvisSearchPlaces(){
 }
 
 function jarvisBootV2(){
-  // Remove old v1.5 Nominatim UI if any remnants exist.
   ['searchBtn','searchResults','searchStatus','destQuery'].forEach(id=>{
     const el=document.getElementById(id);
     if(el && !['googleStatus','placeResults'].includes(id)) el.style.display='none';
