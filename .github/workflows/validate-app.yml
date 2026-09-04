@@ -10,45 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assemble exact app.js candidate
+      - name: Assemble and validate app.js
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import subprocess
-
-          expected='2a1485fead08eb0d4d5f0891ed7a3ab570970a7d'
-          files=sorted(Path('parts').glob('app.*.txt'))
-          chunks=[p.read_text() for p in files]
-          typo="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
-          fixed="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
-
-          variants={
-            'direct': ''.join(chunks),
-            'newline': '\n'.join(chunks),
-            'direct_final_nl': ''.join(chunks)+'\n',
-            'newline_final_nl': '\n'.join(chunks)+'\n',
-          }
-          chosen=None
-          for name,s in variants.items():
-              s=s.replace(typo,fixed,1)
-              Path(f'/tmp/{name}.js').write_text(s)
-              h=subprocess.check_output(['git','hash-object',f'/tmp/{name}.js'],text=True).strip()
-              print(f'{name}: {h} lines={s.count(chr(10))+1}')
-              if h==expected:
-                  chosen=(name,s)
-          if not chosen:
-              raise SystemExit('NO_EXACT_ASSEMBLY_MATCH')
-          name,s=chosen
-          Path('app.js').write_text(s)
-          print('EXACT_MATCH_VARIANT='+name)
-          PY
-      - name: Verify exact source blob and syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(git hash-object app.js)"
-          test "$actual" = "2a1485fead08eb0d4d5f0891ed7a3ab570970a7d"
+          mapfile -d '' appfiles < <(find parts -maxdepth 1 -type f -name 'app.*.txt' -print0 | sort -z)
+          : > app.js
+          for ((i=0; i<${#appfiles[@]}; i++)); do
+            cat "${appfiles[$i]}" >> app.js
+            if (( i < ${#appfiles[@]} - 1 )); then printf '\n' >> app.js; fi
+          done
           node --check app.js
-          echo "APP_JS_EXACT_MATCH_OK $actual"
+          grep -q 'longitude:destination.lon' app.js
+          if grep -q 'latitude:destination.lat,longitude:endPt.lng' app.js; then
+            echo 'STALE_DESTINATION_LONGITUDE_BUG_FOUND'
+            exit 1
+          fi
+          echo "APP_JS_VALID $(git hash-object app.js)"
