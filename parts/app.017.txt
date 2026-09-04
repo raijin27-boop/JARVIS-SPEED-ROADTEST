@@ -1,0 +1,200 @@
+    routes=routes.slice(0,3);
+    // HIGH_QUALITYのRoute.pathを基準データにし、表示はRoute.createPolylines()を優先する。
+    // これによりGoogle公式のルート描画処理をそのまま利用する。
+    const cleanPath=(base)=>{
+      const pts=[];
+      for(const p of (base||[])){
+        if(!p) continue;
+        const lat=typeof p.lat==='function'?p.lat():Number(p.lat);
+        const lng=typeof p.lng==='function'?p.lng():Number(p.lng);
+        if(Number.isFinite(lat)&&Number.isFinite(lng)) pts.push({lat,lng});
+      }
+      return pts;
+    };
+    routeCandidates=routes.map(r=>{const rawPath=cleanPath(r.path),path=jarvisStabilizeRoutePath(rawPath);return{sourceRoute:r,rawPath,path,distanceMeters:Number(r.distanceMeters)||0,durationMillis:Number(r.durationMillis)||0,staticDurationMillis:Number(r.staticDurationMillis)||0,routeLabels:r.routeLabels||[]}});
+    selectedRouteIndex=0;routeData=routeCandidates[0];routeLastOrigin=origin;routeLastAt=Date.now();
+    if(preserveNavigation){
+      // Auto reroute: keep START state and immediately continue on the fastest new route.
+      navSessionStarted=true;routePreviewActive=false;navMapFollow=true;navMapUserMoved=false;
+      jarvisResetVoiceProgress();
+    }else{
+      navSessionStarted=false;routePreviewActive=true;
+    }
+    const km=jarvisRouteDistanceText(routeData);$('navDistance').textContent=km;setTextIf('landDistance',km);setTextIf('routeEta',jarvisRouteEtaText(routeData));
+    jarvisRenderRouteChoices();jarvisRenderRoute();
+    if(preserveNavigation){
+      jarvisUpdateMapStartButton();
+      const msg=rerouteStrategy==='REJOIN'?'元ルートへ戻るルートで案内継続':
+                rerouteStrategy==='HEADING'?'進行方向を優先した新ルートで案内継続':'自動リルート完了';
+      if(typeof currentLat==='number'&&typeof currentLon==='number'){
+        jarvisMotionReset();
+        const recovery=jarvisNewRouteRecoveryState(currentLat,currentLon,currentSpeedKmh);
+        const chosenScore=jarvisRouteCandidateScore(routeData,jarvisTravelHeading());
+        const p=jarvisNearestActiveRoute(currentLat,currentLon);
+        // v6.14.12: route computation finishing is NOT the same as the rider rejoining it.
+        // Keep FREE/GPS visual ownership and wait for 3 aligned fixes before snapping to
+        // the new route. This removes the old-route/new-route tug-of-war during rerouting.
+        if(p&&chosenScore.mismatch<95){
+          jarvisDeviationEscape=true;
+          jarvisVisualGpsPriority=true;
+          jarvisPendingRouteRejoin=true;
+          jarvisPendingRouteRejoinFixes=0;
+          jarvisPendingRouteRejoinStartedAt=Date.now();
+          // Never shorten the five-second GPS-only handoff just because Routes returned quickly.
+          jarvisDeviationGpsIsolationUntil=Math.max(jarvisDeviationGpsIsolationUntil,jarvisDeviationStartedAt?jarvisDeviationStartedAt+5000:Date.now()+5000);
+          jarvisNavTrackingState='REROUTING';
+          jarvisRenderRoute();
+          jarvisSetRouteGuidanceAppearance(true);
+          jarvisClearTurnArrow?.();
+          jarvisMotionStart();
+          jarvisSetStatus(`新ルート取得：走行位置との合流を確認中… ${km}`,'warn');
+        }else{
+          // Never lock the rider into a U-turn. Keep following real GPS and retry from the
+          // current heading if every returned route still starts behind the vehicle.
+          jarvisDeviationEscape=true;
+          jarvisVisualGpsPriority=true;
+          jarvisPendingRouteRejoin=false;
+          jarvisPendingRouteRejoinFixes=0;
+          jarvisNavTrackingState='OFF_ROUTE';
+          jarvisRenderRoute();
+          jarvisSetRouteGuidanceAppearance(false);
+          autoRerouteLastAt=Date.now()-AUTO_REROUTE_RETRY_MS;
+          jarvisSetStatus('進行方向に合うルートを再検索します','warn');
+        }
+      }
+    }else{
+      jarvisScrollToMap();jarvisSetStatus(`${routeCandidates.length}ルート候補 / ${km} / ${jarvisRouteEtaText(routeData)}`,'ok');
+      // route candidates are now visible, lower the sheet to the meter-only position automatically.
+      setTimeout(()=>window.jarvisSheetSetState?.('collapsed',true),120);
+    }
+  }catch(e){
+    if(seq!==routeRequestSeq)return;
+    if(preserveNavigation){
+      // Keep the existing running route on a transient network/API failure.
+      jarvisEnterDeviationEscape('OFF_ROUTE');
+      jarvisNavTrackingState='OFF_ROUTE';
+      autoRerouteLastAt=Date.now()-AUTO_REROUTE_RETRY_MS;
+      jarvisSetStatus('再検索失敗：目的地を保持し、現在位置から再試行します','warn');
+      return;
+    }
+    routeData=null;routeCandidates=[];jarvisHideRouteLines();jarvisRenderRouteChoices();setTextIf('routeEta','ルート取得失敗');
+    jarvisSetStatus('Routes取得エラー：'+(e?.message||e),'bad');
+  }
+}
+
+function saveDestination(dest){
+  destination=dest;
+  routeViaPoints=[];localStorage.removeItem('jarvisRouteViaPoints');jarvisRenderViaMarkers();
+  jarvisAutoDeviationCount=0;jarvisOriginalRoutePath=[];
+  localStorage.setItem('jarvisDestination',JSON.stringify(destination));
+  setTextIf('navName',destination.name||'目的地');
+  const st=$('googleStatus'); if(st) st.textContent=`設定完了：${destination.name||'目的地'}`;
+  const rs=$('placeResults'); if(rs) rs.innerHTML='';
+  updateNav();
+  // Google Maps風：目的地を選んだら地図へ戻り、ROUTE候補を表示する。ADVENTUREへはいつでも切替可能。
+  showTab('nav');
+  navMode='ROUTE'; localStorage.setItem('jarvisNavMode','ROUTE'); jarvisUpdateNavModeButtons();
+  routePreviewActive=true;navSessionStarted=false;jarvisUpdateMapStartButton();jarvisScrollToMap();
+  setTimeout(()=>jarvisComputeRoute(true),180);
+}
+
+function restoreDestination(){
+  try{
+    const d=JSON.parse(localStorage.getItem('jarvisDestination')||'null');
+    if(d&&isFinite(d.lat)&&isFinite(d.lon)){
+      destination=d;
+      setTextIf('navName',d.name||'目的地'); setTextIf('landName',d.name||'目的地');
+      const st=$('googleStatus'); if(st) st.textContent=`前回の目的地：${d.name||'目的地'}`;
+    }
+  }catch(e){}
+}
+
+function clearDestination(){
+  destination=null;
+  localStorage.removeItem('jarvisDestination');
+  setTextIf('navName','目的地未設定'); setTextIf('landName','目的地未設定');
+  $('navDistance').textContent='-- km';
+  setTextIf('navBearingText','目的地を検索してください');
+  const st=$('googleStatus'); if(st) st.textContent='目的地をクリアしました';
+  const rs=$('placeResults'); if(rs) rs.innerHTML='';
+  jarvisClearRoute();
+  jarvisSyncMaps();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+async function searchDestination(){
+  const q=$('searchInput').value.trim();
+  if(!q){
+    $('searchStatus').textContent='施設名・駅名・住所を入力してください';
+    return;
+  }
+
+  if(searchAbort) searchAbort.abort();
+  searchAbort=new AbortController();
+
+  $('searchBtn').disabled=true;
+  $('searchStatus').textContent='検索中…';
+  $('searchResults').innerHTML='';
+
+  try{
+    const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=jp&accept-language=ja&q='+encodeURIComponent(q);
+    const res=await fetch(url,{
+      method:'GET',
+      headers:{'Accept':'application/json'},
+      signal:searchAbort.signal
+    });
+    if(!res.ok) throw new Error('検索サーバー '+res.status);
+    const data=await res.json();
+
+    if(!Array.isArray(data)||data.length===0){
+      $('searchStatus').textContent='候補が見つかりませんでした。名称や住所を変えて検索してください。';
+      $('searchResults').innerHTML='<div class="search-empty">検索結果なし</div>';
+      return;
+    }
+
+    $('searchStatus').textContent=`${data.length}件の候補`;
+    $('searchResults').innerHTML=data.map((r,i)=>{
+      const full=r.display_name||'名称不明';
+      const primary=(r.name||full.split(',')[0]||'目的地').trim();
+      const sub=full;
+      return `<button class="search-item" data-i="${i}">
+        <span class="name">${escapeHtml(primary)}</span>
+        <span class="sub">${escapeHtml(sub)}</span>
+      </button>`;
+    }).join('');
+
+    [...$('searchResults').querySelectorAll('.search-item')].forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const r=data[Number(btn.dataset.i)];
+        const lat=Number(r.lat),lon=Number(r.lon);
+        if(!isFinite(lat)||!isFinite(lon)) return;
+        const full=r.display_name||'目的地';
+        const name=(r.name||full.split(',')[0]||'目的地').trim();
+        saveDestination({lat,lon,name,displayName:full});
+      });
+    });
+
+  }catch(e){
+    if(e.name==='AbortError') return;
+    $('searchStatus').textContent='検索できませんでした。通信状態を確認してください。';
+    $('searchResults').innerHTML='<div class="search-empty">目的地検索エラー</div>';
+  }finally{
+    $('searchBtn').disabled=false;
+  }
+}
+
+
+
+function showTab(which){
+  const speed=which==='speed';
+  $('speedPanel').classList.toggle('hidden',!speed);$('navPanel').classList.toggle('hidden',speed);
+  $('speedTab')?.classList.toggle('active',speed);$('navTab')?.classList.toggle('active',!speed);
+  document.body.classList.toggle('nav-mode',!speed);document.documentElement.classList.toggle('nav-mode',!speed);
+  if(!speed){
+    updateNav();
+    // v6.14.7: 目的地検索やナビSTARTから独立して、NAVを開いた時点で連続位置追跡を開始する。
+    // Google Navigation SDKのLocation Providerと同じく、位置更新をルート状態の下位レイヤーとして扱う。
+    jarvisEnsureLocationTracking(false);
