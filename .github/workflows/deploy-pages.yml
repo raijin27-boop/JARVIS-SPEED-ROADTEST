@@ -33,17 +33,20 @@ jobs:
             cat "${htmlfiles[$i]}" >> _site/index.html
             if (( i < ${#htmlfiles[@]} - 1 )); then printf '\n' >> _site/index.html; fi
           done
-          cp app.css road-test-ui.js road-test-fixes.js road-test-start-fix.js _site/
+          cp app.css road-test-ui.js road-test-fixes.js road-test-start-fix.js road-test-v652.js _site/
           touch _site/.nojekyll
           node --check _site/app.js
           node --check _site/road-test-ui.js
           node --check _site/road-test-fixes.js
           node --check _site/road-test-start-fix.js
+          node --check _site/road-test-v652.js
           test -s _site/index.html
-          grep -q 'v6.14.51-ROADTEST-20260905A' _site/index.html
-          grep -q 'road-test-start-fix.js' _site/index.html
+          grep -q 'v6.14.52-ROADTEST-20260905A' _site/index.html
+          grep -q 'road-test-v652.js' _site/index.html
+          grep -q 'ROUTE_GENERATION_CHANGED' _site/road-test-v652.js
+          grep -q 'WAKE_LOCK_HEALTH_REPAIR' _site/road-test-v652.js
           grep -q 'longitude:destination.lon' _site/app.js
-          test -s _site/road-test-start-fix.js
+          test -s _site/road-test-v652.js
           echo "assembled_app_blob=$(git hash-object _site/app.js)"
           echo "JARVIS_SITE_BUILD_OK"
       - uses: actions/configure-pages@v5
