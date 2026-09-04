@@ -21,7 +21,7 @@ jobs:
           set -euo pipefail
           rm -rf _site /tmp/claude-v654.zip
           mkdir -p _site
-          curl -fsSL 'https://sdmntprnznorth.oaiusercontent.com/files/00000000-66e8-820b-b22d-bd1eb164145f/raw?se=2026-09-04T19%3A46%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=fcdc8074-868e-5d02-b19e-24bf22e00e6f&skoid=f5e14fda-2af7-44a3-9d18-d372ffcad871&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-04T07%3A43%3A48Z&ske=2026-09-05T07%3A43%3A48Z&sks=b&skv=2026-02-06&sig=VW2HbrvcRiEesbwwfIUm0%2BxuqH/znzQ6GNovufPqA/A%3D' -o /tmp/claude-v654.zip
+          curl -fsSL 'https://sdmntprnznorth.oaiusercontent.com/files/00000000-c198-820b-add8-0ed4512b0fcd/raw?se=2026-09-04T19%3A57%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=c716c8b8-ba0d-5e1f-b988-16606309e115&skoid=f5e14fda-2af7-44a3-9d18-d372ffcad871&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-04T03%3A16%3A45Z&ske=2026-09-05T03%3A16%3A45Z&sks=b&skv=2026-02-06&sig=RIQe6jLHWnWWzfznbVLnnHt%2BudWV64hV2B/b0GTAL/0%3D' -o /tmp/claude-v654.zip
           unzip -q /tmp/claude-v654.zip -d _site
           touch _site/.nojekyll
           node --check _site/app.js
