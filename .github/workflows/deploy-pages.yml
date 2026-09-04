@@ -27,15 +27,6 @@ jobs:
             cat "${appfiles[$i]}" >> _site/app.js
             if (( i < ${#appfiles[@]} - 1 )); then printf '\n' >> _site/app.js; fi
           done
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('_site/app.js')
-          s=p.read_text()
-          bad="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
-          good="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
-          s=s.replace(bad,good,1)
-          p.write_text(s)
-          PY
           mapfile -d '' htmlfiles < <(find site-parts -maxdepth 1 -type f -name 'index.*.html' -print0 | sort -z)
           : > _site/index.html
           for ((i=0; i<${#htmlfiles[@]}; i++)); do
@@ -48,8 +39,9 @@ jobs:
           node --check _site/road-test-ui.js
           node --check _site/road-test-fixes.js
           test -s _site/index.html
-          grep -q 'v6.14.48-ROADTEST-20260905A' _site/index.html
+          grep -q 'v6.14.50-ROADTEST-20260905A' _site/index.html
           grep -q 'road-test-fixes.js' _site/index.html
+          grep -q 'longitude:destination.lon' _site/app.js
           test -s _site/road-test-fixes.js
           echo "assembled_app_blob=$(git hash-object _site/app.js)"
           echo "JARVIS_SITE_BUILD_OK"
