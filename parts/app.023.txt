@@ -1,0 +1,218 @@
+
+/* JARVIS SPEED v6.15 integrated navigation core
+   Single owners for map matching, nav state, reroute evidence, route rendering and wake lock.
+   Replaces the runtime road-test-fixes/v652/v653 monkey-patch stack. */
+{
+  const JARVIS_CORE_VERSION='v6.15.0-INTEGRATED';
+  let jarvisCoreRouteGeneration=1;
+  let jarvisCoreOriginalRoute=null;
+  let jarvisCoreRerouteEvidence={fixes:0,since:0};
+  let jarvisCoreRestoreFixes=0;
+  let jarvisCoreWakeBusy=false;
+  let jarvisCoreWakeTimer=null;
+  let jarvisCoreLastState=typeof jarvisNavTrackingState==='string'?jarvisNavTrackingState:'TRACKING';
+
+  function jarvisCoreMarker(kind,detail={}){
+    try{jarvisRoadTestMarker?.(kind,{core:JARVIS_CORE_VERSION,generation:jarvisCoreRouteGeneration,...detail});}catch(e){}
+  }
+
+  function jarvisNavStateTransition(next,reason='',detail={}){
+    if(!next||jarvisNavTrackingState===next)return jarvisNavTrackingState;
+    const prev=jarvisNavTrackingState;
+    jarvisNavTrackingState=next;
+    jarvisCoreLastState=next;
+    jarvisCoreMarker('NAV_STATE_TRANSITION',{from:prev,to:next,reason,...detail});
+    return next;
+  }
+
+  function jarvisCoreActiveRoute(){return routeCandidates?.[selectedRouteIndex]||routeData||null;}
+
+  function jarvisCoreRouteCache(route=jarvisCoreActiveRoute()){
+    const raw=route?.path||[];
+    if(raw.length<2)return null;
+    const pts=raw.map(jarvisNormalizePathPoint).filter(Boolean);
+    if(pts.length<2)return null;
+    const cum=[0];
+    for(let i=1;i<pts.length;i++)cum[i]=cum[i-1]+haversine({latitude:pts[i-1].lat,longitude:pts[i-1].lng},{latitude:pts[i].lat,longitude:pts[i].lng});
+    return {route,pts,cum,total:cum[cum.length-1]};
+  }
+
+  function jarvisCoreProject(lat,lon,{globalRecovery=false,route=null}={}){
+    const rc=jarvisCoreRouteCache(route);
+    if(!rc||!Number.isFinite(lat)||!Number.isFinite(lon))return null;
+    const {pts,cum,total}=rc;
+    const R=6371000,rad=Math.PI/180,lat0=lat*rad,cos=Math.max(.15,Math.cos(lat0));
+    const center=Number.isFinite(jarvisMotion?.targetS)?jarvisMotion.targetS:(Number.isFinite(jarvisMotionDiag?.projectionS)?jarvisMotionDiag.projectionS:null);
+    const speed=Math.max(0,Number(currentSpeedKmh)||0),speedMps=speed/3.6;
+    const back=center==null?0:Math.max(70,speedMps*4+35);
+    const forward=center==null?Math.min(total,700):Math.max(320,speedMps*14+200);
+    const lo=globalRecovery||center==null?0:Math.max(0,center-back);
+    const hi=globalRecovery||center==null?Math.min(total,700):Math.min(total,center+forward);
+    const travel=typeof jarvisTravelHeading==='function'?jarvisTravelHeading():null;
+    let best=null,bestScore=Infinity;
+    for(let i=1;i<pts.length;i++){
+      const segStart=cum[i-1],segEnd=cum[i];
+      if(segEnd<lo||segStart>hi)continue;
+      const a=pts[i-1],b=pts[i];
+      const ax=(a.lng-lon)*rad*cos*R,ay=(a.lat-lat)*rad*R,bx=(b.lng-lon)*rad*cos*R,by=(b.lat-lat)*rad*R;
+      const dx=bx-ax,dy=by-ay,den=dx*dx+dy*dy;
+      let u=den>0?-(ax*dx+ay*dy)/den:0;u=Math.max(0,Math.min(1,u));
+      const x=ax+u*dx,y=ay+u*dy,d=Math.hypot(x,y),segLen=Math.max(.01,segEnd-segStart),s=segStart+segLen*u;
+      if(s<lo||s>hi)continue;
+      const sh=bearing(a.lat,a.lng,b.lat,b.lng);
+      const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,sh):0;
+      const headingPenalty=speed>=5?(mismatch>120?100:mismatch>90?45:mismatch>60?16:0):0;
+      const backwardPenalty=center!=null&&s<center-10?(center-10-s)*.6:0;
+      const score=d+headingPenalty+backwardPenalty;
+      if(score<bestScore){bestScore=score;best={lat:lat+y/R/rad,lng:lon+x/R/rad/cos,distance:d,s,heading:sh,mismatch,segmentIndex:i-1,u};}
+    }
+    if(best&&best.distance<=120)return best;
+    return null;
+  }
+
+  jarvisMotionProject=function(lat,lon){
+    const local=jarvisCoreProject(Number(lat),Number(lon));
+    if(local)return local;
+    // Only initial/recovery states may perform a bounded global recovery scan.
+    const allowGlobal=!Number.isFinite(jarvisMotion?.targetS)||jarvisNavTrackingState==='REROUTING'||jarvisPendingRouteRejoin;
+    return allowGlobal?jarvisCoreProject(Number(lat),Number(lon),{globalRecovery:true}):null;
+  };
+
+  jarvisNearestActiveRoute=function(lat,lon){
+    const p=jarvisCoreProject(Number(lat),Number(lon));
+    if(!p)return null;
+    return {distance:p.distance,heading:p.heading,s:p.s,point:{lat:p.lat,lng:p.lng}};
+  };
+
+  function jarvisCommitRoute(next,reason='route-commit'){
+    if(!next?.path?.length||next.path.length<2)return false;
+    routeCandidates=[next];selectedRouteIndex=0;routeData=next;
+    routeLastAt=Date.now();
+    routeLastOrigin={latitude:currentLat,longitude:currentLon};
+    jarvisCoreRouteGeneration++;
+    jarvisPendingRouteRejoin=false;jarvisPendingRouteRejoinFixes=0;
+    jarvisMotionReset?.();
+    if(Number.isFinite(currentLat)&&Number.isFinite(currentLon))jarvisMotionAcceptFix?.(currentLat,currentLon,currentSpeedKmh,lastPos?.coords?.accuracy);
+    jarvisResetVoiceProgress?.();
+    jarvisCoreRerouteEvidence={fixes:0,since:0};jarvisCoreRestoreFixes=0;
+    jarvisRenderRoute();
+    jarvisCoreMarker('ROUTE_COMMITTED',{reason,pathLength:next.path.length});
+    return true;
+  }
+
+  jarvisRenderRoute=function(){
+    const r=jarvisCoreActiveRoute();
+    if(!r?.path?.length||r.path.length<2)return;
+    if(navGoogleMap){
+      const oldPrimary=navRouteLine;
+      const oldLines=Array.isArray(navAltRouteLines)?navAltRouteLines.slice():[];
+      let fresh=null;
+      try{
+        fresh=new google.maps.Polyline({map:navGoogleMap,path:r.path,strokeColor:'#238cff',strokeOpacity:jarvisDeviationEscape?.35:.98,strokeWeight:jarvisDeviationEscape?7:11,zIndex:20,clickable:false});
+        if((fresh.getPath?.().getLength?.()||0)<2)throw new Error('short-route-line');
+        navRouteLine=fresh;navAltRouteLines=[fresh];
+        for(const line of oldLines){if(line===fresh)continue;try{line?.setMap?.(null)}catch(e){}try{line?.remove?.()}catch(e){}}
+        if(oldPrimary&&oldPrimary!==fresh&&!oldLines.includes(oldPrimary)){try{oldPrimary.setMap?.(null)}catch(e){}}
+      }catch(e){try{fresh?.setMap?.(null)}catch(_){};if(oldPrimary){navRouteLine=oldPrimary;navAltRouteLines=oldLines.length?oldLines:[oldPrimary];}return;}
+    }
+    if(landGoogleMap){
+      const oldLand=landRouteLine;let freshLand=null;
+      try{freshLand=new google.maps.Polyline({map:landGoogleMap,path:r.path,strokeColor:'#238cff',strokeOpacity:.94,strokeWeight:10,zIndex:12});if((freshLand.getPath?.().getLength?.()||0)>=2){landRouteLine=freshLand;oldLand?.setMap?.(null);}else freshLand.setMap?.(null);}catch(e){}
+    }
+    jarvisClearRouteLabels?.();jarvisUpdateMapStartButton?.();if(mapViewMode==='3D')jarvisApplyVector3D?.();
+    jarvisCoreMarker('ROUTE_RENDER_ATOMIC',{pathLength:r.path.length});
+  };
+
+  const jarvisCoreComputeRouteOriginal=jarvisComputeRoute;
+  jarvisComputeRoute=async function(){
+    const before=routeLastAt;
+    const out=await jarvisCoreComputeRouteOriginal.apply(this,arguments);
+    if(routeLastAt&&routeLastAt!==before){
+      jarvisCoreRouteGeneration++;
+      jarvisCoreRerouteEvidence={fixes:0,since:0};jarvisCoreRestoreFixes=0;
+      try{jarvisRoadTestLastProjectionS=null;}catch(e){}
+      jarvisCoreMarker('ROUTE_GENERATION_CHANGED',{routeRequestSeq});
+    }
+    return out;
+  };
+
+  const jarvisCoreStartOriginal=jarvisStartNavigation;
+  jarvisStartNavigation=function(){
+    const fresh=!navSessionStarted&&navMode==='ROUTE';
+    if(fresh){const r=jarvisCoreActiveRoute();jarvisCoreOriginalRoute=r?.path?.length?r:null;jarvisCoreRestoreFixes=0;jarvisCoreRerouteEvidence={fixes:0,since:0};}
+    const out=jarvisCoreStartOriginal.apply(this,arguments);
+    if(navSessionStarted)jarvisCoreEnsureWake('start');
+    return out;
+  };
+
+  jarvisAutoRerouteUpdate=function(coords,speedKmh){
+    if(!navSessionStarted||navMode!=='ROUTE'||!routeData||jarvisNavTrackingState==='ARRIVED')return;
+    const lat=Number(coords?.latitude),lon=Number(coords?.longitude),acc=Number(coords?.accuracy),speed=Number(speedKmh)||0;
+    if(!Number.isFinite(lat)||!Number.isFinite(lon)||!Number.isFinite(acc)||acc>40)return;
+
+    // Rejoin original route: one policy, through one commit path.
+    if(jarvisCoreOriginalRoute&&routeData!==jarvisCoreOriginalRoute){
+      const originalMatch=jarvisCoreProject(lat,lon,{globalRecovery:true,route:jarvisCoreOriginalRoute});
+      const aligned=!!originalMatch&&originalMatch.distance<=Math.max(8,Math.min(12,acc*.6))&&(speed<5||originalMatch.mismatch<40);
+      jarvisCoreRestoreFixes=aligned?jarvisCoreRestoreFixes+1:0;
+      if(jarvisCoreRestoreFixes>=3){jarvisCommitRoute(jarvisCoreOriginalRoute,'rejoin-original');jarvisNavStateTransition('TRACKING','rejoin-original');jarvisExitDeviationEscape?.();return;}
+    }
+
+    const near=jarvisNearestActiveRoute(lat,lon);
+    if(!near)return;
+    const moveHeading=Number.isFinite(currentHeading)?currentHeading:jarvisLastMovingHeading;
+    const mismatch=jarvisHeadingMismatch(moveHeading,near.heading),lateral=near.distance;
+    const threshold=Math.max(12,Math.min(20,7+acc*.65));
+    const headingDeparture=speed>=6&&lateral>5&&mismatch>60;
+    const off=lateral>threshold||headingDeparture;
+    if(off){
+      if(!jarvisCoreRerouteEvidence.since)jarvisCoreRerouteEvidence.since=Date.now();
+      jarvisCoreRerouteEvidence.fixes++;
+      jarvisNavStateTransition('OFF_ROUTE',headingDeparture?'heading':'lateral',{lateral,mismatch,acc});
+      jarvisEnterDeviationEscape?.(headingDeparture?'HEADING':'LATERAL');
+      const held=Date.now()-jarvisCoreRerouteEvidence.since;
+      const hard=lateral>Math.max(24,threshold+7);
+      const ready=(hard&&jarvisCoreRerouteEvidence.fixes>=2)||(jarvisCoreRerouteEvidence.fixes>=2&&held>=650);
+      if(ready&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=1800){
+        autoRerouteLastAt=Date.now();autoRerouteBusy=true;jarvisNavStateTransition('REROUTING','confirmed-deviation',{lateral,mismatch,acc});
+        jarvisResetAutoRerouteWatch?.();
+        Promise.resolve(jarvisComputeRoute(true,true,'HEADING')).finally(()=>{autoRerouteBusy=false;jarvisCoreRerouteEvidence={fixes:0,since:0};});
+      }
+    }else if(lateral<8&&(speed<5||mismatch<35)){
+      jarvisCoreRerouteEvidence={fixes:0,since:0};
+      if(!jarvisPendingRouteRejoin){jarvisExitDeviationEscape?.();jarvisNavStateTransition('TRACKING','route-aligned',{lateral,mismatch,acc});jarvisSetRouteGuidanceAppearance?.(true);}
+    }else{
+      jarvisCoreRerouteEvidence.fixes=Math.max(0,jarvisCoreRerouteEvidence.fixes-1);if(!jarvisCoreRerouteEvidence.fixes)jarvisCoreRerouteEvidence.since=0;
+    }
+  };
+
+  const jarvisCoreStartGuardOriginal=jarvisStartOriginGuard;
+  jarvisStartOriginGuard=function(){
+    const result=jarvisCoreStartGuardOriginal.apply(this,arguments);if(!result)return result;
+    if(result.status==='NO_ROUTE'||result.status==='INVALID_POINTS'||result.status==='REVERSED')return result;
+    const start=Number(result.startDistance),end=Number(result.endDistance);
+    result.blocked=false;
+    if(Number.isFinite(start)&&start>80){result.status='CORRUPT';result.blocked=true;result.reason=`ルート起点が現在地から${Math.round(start)}mずれています。再検索してください`;}
+    else if(Number.isFinite(end)&&end>750){result.status='CORRUPT';result.blocked=true;result.reason=`ルート終点が目的地から${Math.round(end)}m離れています。再検索してください`;}
+    else if(Number.isFinite(end)&&end>250){result.status='WARN';result.reason=`走行可能なルート終点が目的地ピンから${Math.round(end)}m離れています`;}
+    else if(Number.isFinite(start)&&start>30){result.status='WARN';result.reason=`ルート起点に${Math.round(start)}mのずれがあります`;}
+    else{result.status='OK';result.reason='';}
+    jarvisRouteIntegrity=result;jarvisCoreMarker('START_GUARD_INTEGRATED',{startDistance:start,endDistance:end,status:result.status,blocked:result.blocked});return result;
+  };
+
+  function jarvisCoreWakeWanted(){return document.visibilityState==='visible'&&!!(navSessionStarted||running);}
+  async function jarvisCoreEnsureWake(reason='sync'){
+    if(jarvisCoreWakeBusy||!jarvisCoreWakeWanted())return;
+    if(wakeLock&&wakeLock.released!==true)return;
+    jarvisCoreWakeBusy=true;
+    try{if(wakeLock?.released===true)wakeLock=null;await requestWakeLock();jarvisCoreMarker(wakeLock?'WAKE_LOCK_ON':'WAKE_LOCK_UNAVAILABLE',{reason});}catch(e){jarvisCoreMarker('WAKE_LOCK_UNAVAILABLE',{reason,error:String(e?.message||e)});}finally{jarvisCoreWakeBusy=false;}
+  }
+  jarvisSyncWakeLock=async function(){if(jarvisCoreWakeWanted())await jarvisCoreEnsureWake('sync');else if(wakeLock)await releaseWakeLock();};
+  if(jarvisCoreWakeTimer)clearInterval(jarvisCoreWakeTimer);
+  jarvisCoreWakeTimer=setInterval(()=>jarvisCoreEnsureWake('watchdog'),1500);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')jarvisCoreEnsureWake('visibility');});
+  window.addEventListener('pageshow',()=>jarvisCoreEnsureWake('pageshow'));
+  window.addEventListener('focus',()=>jarvisCoreEnsureWake('focus'));
+
+  jarvisCoreMarker('V615_INTEGRATED_CORE_READY',{});
+}
