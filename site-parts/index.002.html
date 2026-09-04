@@ -7,6 +7,7 @@
 
   <div class="note">
     🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
+    v6.14.51：START ORIGIN GUARDを再設計。ルート起点の現在地整合を最優先し、寺社・大型施設・駅・公園等でGoogleの走行可能な終点が目的地ピンから離れる正常ケースを誤ってCORRUPT扱いしないよう修正。目的地終点差は250m以内を許容、250〜750mを警告、750m超を停止対象とする。<br>
     v6.14.50：v6.14.49でSTARTを誤停止させていたSTART ORIGIN GUARDの目的地距離計算を修正。ルート終端から目的地ピンまでの距離を正しいdestination longitudeで判定する。<br>
     v6.14.49：到着判定を目的地ピン20m以内へ変更し、到着後は目的地・ルート表示を自動消去。NAV中のWake LockがiPhone側で解除された場合もrelease/visibility/pageshow/focus/watchdogから自動再取得する常時点灯強化を追加。ARRIVED後の再ルート復活も遮断。<br>
     v6.14.48：実走ログを基準に、走行中ルート線を新Polyline生成成功後に差し替えるatomic swapへ変更し、ルート線消失時の自己復旧も追加。再ルート直後6.5秒は新ルートとの整合確認を優先し、十分近い位置でのOFF_ROUTE再発・再検索連鎖を抑制。自車表示とGPS推定ターゲットの乖離も速度連動で制限し、40〜60m級の表示ジャンプを抑える。ロードテスト画面はフルスクリーン地図＋オーバーレイ化し、JSONは「ファイル保存」と「共有」を分離。<br>
@@ -25,12 +26,13 @@
 </div>
 <div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
 font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
-opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.50-ROADTEST-20260905A</div>
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.51-ROADTEST-20260905A</div>
 <script>
-window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.50-ROADTEST-20260905A";
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.51-ROADTEST-20260905A";
 try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
 </script>
 <script src="road-test-fixes.js" defer></script>
+<script src="road-test-start-fix.js" defer></script>
 <script src="road-test-ui.js" defer></script>
 </body>
 </html>
