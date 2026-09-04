@@ -1,0 +1,200 @@
+  bind('voiceTestBtn','click',()=>{const was=voiceGuideEnabled;voiceGuideEnabled=true;jarvisSpeak('ジャービスです。音声案内のテストです。',true);voiceGuideEnabled=was;});
+  if('speechSynthesis' in window){window.speechSynthesis.addEventListener?.('voiceschanged',jarvisPopulateVoiceSelect);setTimeout(jarvisPopulateVoiceSelect,250);setTimeout(jarvisPopulateVoiceSelect,1200);}
+  jarvisSyncVoiceSettingsUI();
+}
+
+let jarvisArrivalResetBusy=false;
+function jarvisArrivalUpdate(){
+  if(jarvisArrivalResetBusy||!navSessionStarted||navMode!=='ROUTE'||!destination||
+     typeof currentLat!=='number'||typeof currentLon!=='number')return false;
+  const pinDistance=haversine(
+    {latitude:currentLat,longitude:currentLon},
+    {latitude:destination.lat,longitude:destination.lon}
+  );
+
+  // v6.14: distance-to-destination alone is never enough. A nearby overpass/parallel road
+  // must not clear the destination. Require that route progress is also at the final section.
+  let remaining=Infinity;
+  if(Number.isFinite(jarvisMotion.total)&&Number.isFinite(jarvisMotion.displayS))
+    remaining=Math.max(0,jarvisMotion.total-jarvisMotion.displayS);
+  const near=jarvisNearestActiveRoute(currentLat,currentLon);
+  const onUsefulRoute=!near||near.distance<=35;
+
+  // v6.14.40 ARRIVAL SNAP: two independent valid arrival paths, both gated by the same
+  // useful-route sanity check above. A route that ends noticeably away from the pin (e.g. a
+  // stale/corrupted route, see jarvisStartOriginGuard) must not let route-end alone declare
+  // arrival, so Path B additionally checks the route's own endpoint against the destination.
+  const path=(routeCandidates[selectedRouteIndex]||routeData)?.path;
+  const routeEndPt=Array.isArray(path)&&path.length?jarvisNormalizePathPoint(path[path.length-1]):null;
+  const routeEndNearDestination=routeEndPt?haversine({latitude:routeEndPt.lat,longitude:routeEndPt.lng},{latitude:destination.lat,longitude:destination.lon})<=180:false;
+
+  const pinArrival=Number.isFinite(pinDistance)&&pinDistance<=45&&onUsefulRoute;
+  const routeEndArrival=Number.isFinite(remaining)&&remaining<=35&&routeEndNearDestination&&onUsefulRoute;
+  if(!pinArrival&&!routeEndArrival)return false;
+
+  jarvisArrivalResetBusy=true;
+  jarvisNavTrackingState='ARRIVED';
+  routeRequestSeq++;
+  voiceArrivalSpoken=true;
+  try{window.speechSynthesis?.cancel?.()}catch(e){}
+  if(voiceGuideEnabled)jarvisSpeak('目的地に到着しました',true);
+
+  // Google Maps-like behavior: finish guidance, but KEEP the destination.
+  // Destination is only removed by explicit user action / a newly selected destination.
+  jarvisExitDeviationEscape();
+  jarvisExitUTurnRecovery();
+  jarvisMotionReset();
+  jarvisClearTurnArrow();
+  navSessionStarted=false;
+  routePreviewActive=true;
+  navMapFollow=false;
+  navMapUserMoved=true;
+  jarvisUpdateMapStartButton();
+  setTextIf('routeEta','到着');
+  jarvisSetStatus('目的地に到着しました。目的地は保持しています','ok');
+
+  setTimeout(()=>{jarvisArrivalResetBusy=false;},2500);
+  return true;
+}
+
+function jarvisResetVoiceProgress(){
+  voiceStepIndex=0;voiceAnnounced.clear();voiceArrivalSpoken=false;jarvisGuidanceCache=null;jarvisGuidanceCacheAt=0;jarvisGuidancePrevDistance.clear();
+  jarvisLastGuidanceKeyBase=null;
+  // v6.14.44 VOICE TRUTH stale-start guard: a new navigation session must never inherit the
+  // previous session's speech cooldown timer or queued utterances. Without this, the simulator's
+  // back-to-back scenarios could have their very first "approach" announcement silently dropped
+  // because voiceLastSpokenAt was still recent from the PRIOR scenario's arrival announcement.
+  jarvisVoiceSessionId++;
+  voiceLastSpokenAt=0;
+  try{window.speechSynthesis?.cancel?.()}catch(e){}
+}
+function jarvisUpdateVoiceButton(){
+  const b=$('voiceGuideBtn');if(!b)return;
+  const pct=Math.round(voiceVolume*100);
+  b.textContent=pct===0?'🔇':pct<50?'🔉':'🔊';
+  b.classList.toggle('active',pct>0);
+  b.setAttribute('aria-label','音声音量を調整');
+  const mv=$('mapVoiceVolume');if(mv)mv.value=String(pct);
+  setTextIf('mapVoiceVolumeValue',`${pct}%`);
+}
+function jarvisSetMapVoiceVolume(v){
+  const pct=Math.min(100,Math.max(0,Number(v)||0));
+  voiceVolume=pct/100;
+  voiceGuideEnabled=pct>0;
+  localStorage.setItem('jarvisVoiceVolume',String(voiceVolume));
+  localStorage.setItem('jarvisVoiceGuide',voiceGuideEnabled?'1':'0');
+  const settingsVol=$('voiceVolume');if(settingsVol)settingsVol.value=String(voiceVolume);
+  setTextIf('voiceVolumeValue',`${pct}%`);
+  setTextIf('mapVoiceVolumeValue',`${pct}%`);
+  jarvisUpdateVoiceButton();
+  if(!voiceGuideEnabled){try{window.speechSynthesis?.cancel()}catch(e){}}
+}
+function jarvisToggleVolumePopup(e){
+  e?.stopPropagation?.();
+  const pop=$('voiceVolumePopup');if(!pop)return;
+  pop.classList.toggle('hidden');
+}
+function jarvisCloseVolumePopup(){const pop=$('voiceVolumePopup');if(pop)pop.classList.add('hidden');}
+function jarvisVoiceGuideUpdate(){
+  if(!voiceGuideEnabled||!navSessionStarted||navMode!=='ROUTE'||!Number.isFinite(jarvisMotion.displayS))return;
+
+  // v6.14.7: arrow / voice / 70m zoom share one stabilized guidance event.
+  // A short cache prevents one noisy GPS projection from making guidance disappear.
+  const turn=jarvisCurrentGuidanceEvent();
+  if(!turn)return;
+  const d=turn.distance;
+  if(!Number.isFinite(d))return;
+
+  // Never issue a new RIGHT/LEFT call after the maneuver has already begun.
+  // This suppresses the dangerous "straight road after junction -> turn now" symptom.
+  if(d < -2 || jarvisMotion.displayS>turn.endS+3)return;
+
+  const prev=jarvisGuidancePrevDistance.get(turn.key);
+  jarvisGuidancePrevDistance.set(turn.key,d);
+
+  // Threshold crossing is tolerant of GPS jumps (e.g. 92m -> 51m).
+  // Direct <= checks also cover the first fix arriving already inside the zone.
+  const crossedApproach=Number.isFinite(prev)?(prev>100&&d<=100):(d<=100);
+  const crossedNear=Number.isFinite(prev)?(prev>25&&d<=25):(d<=25);
+
+  let level='';
+  if(d<=25)level='near';
+  else if(d<=100)level='approach';
+  if(!level)return;
+
+  const text=jarvisGuidanceVoiceText(turn,level);
+  if(!text)return;
+  const key=`${turn.key}:${level}`;
+  if(voiceAnnounced.has(key))return;
+
+  // If we are in-zone, announce even when the exact threshold was skipped.
+  if((level==='near'&&(crossedNear||d<=25))||(level==='approach'&&(crossedApproach||d<=100))){
+    // v6.14.44 VOICE TRUTH queue replacement: turn.key (stable per-maneuver, see jarvisTurnEvents)
+    // changing from the last maneuver we actually announced means guidance moved on to a
+    // different junction (a new step, or a post-reroute maneuver). Any utterance for the OLD
+    // maneuver still sitting in the speechSynthesis queue is now a stale stage and must not be
+    // allowed to play after this new one; cancel it first.
+    if(jarvisLastGuidanceKeyBase!==null&&jarvisLastGuidanceKeyBase!==turn.key){
+      try{window.speechSynthesis?.cancel?.()}catch(e){}
+    }
+    // Mark announced ONLY when jarvisSpeak actually accepted the request (voice truth). A
+    // cooldown-rejected attempt is left unmarked so the next tick can retry it, instead of the
+    // stage being silently lost forever (the v6.14.41 root cause) or, via key drift elsewhere,
+    // being announced twice (the "voice duplicate" symptom this build targets).
+    if(jarvisSpeak(text,false,{key,level})){
+      voiceAnnounced.add(key);
+      jarvisLastGuidanceKeyBase=turn.key;
+    }
+  }
+}
+
+function jarvisRouteButtonTextColor(i){
+  return i===0?'#ffffff':'#062032';
+}
+function jarvisSyncMapActionButton(){
+  const b=$('mapStartBtn'); if(!b)return;
+  if(navSessionStarted){
+    b.innerHTML='<span class="map-action-main">↻ REROUTE</span><span class="map-action-sub">現在地から再検索</span>';
+    b.style.background='rgba(30,40,52,.58)';
+    b.style.color='rgba(255,255,255,.88)';
+    b.style.borderColor='rgba(255,255,255,.30)';
+    return;
+  }
+  const r=routeCandidates[selectedRouteIndex]||routeData;
+  const mins=r?Math.max(1,Math.round((Number(r.durationMillis)||0)/60000)):'--';
+  const dist=r?jarvisRouteDistanceText(r):'-- km';
+  b.innerHTML=`<span class="map-action-main">▶ START</span><span class="map-action-sub">${mins}分 · ${dist}</span>`;
+  b.style.background=jarvisRouteButtonColor(selectedRouteIndex);
+  b.style.color=jarvisRouteButtonTextColor(selectedRouteIndex);
+  b.style.borderColor='rgba(255,255,255,.34)';
+}
+function jarvisUpdateMapStartButton(){
+  const b=$('mapStartBtn');if(!b)return;
+  const show=navMode==='ROUTE'&&routeCandidates.length>0;
+  b.classList.toggle('hidden',!show);
+  b.classList.toggle('nav-running',navSessionStarted);
+  jarvisSyncMapActionButton();
+  b.disabled=false;
+}
+// v6.14.44 START ORIGIN GUARD (previously unimplemented). Before navigation starts, validate
+// that the selected route actually goes from where the rider is to where they asked to go.
+// This catches a stale/corrupted route slipping through (e.g. a route response that raced a
+// destination change, or a reversed/garbled path) BEFORE it becomes the vehicle's guidance
+// authority. Never silently "fix" a suspicious route (e.g. by reversing its path) - either
+// accept it, warn, or refuse to start and require a fresh jarvisComputeRoute().
+//
+// v6.14.45 fix: route-PATH integrity (is this route itself well-formed and forward-facing?)
+// must be judged against `routeLastOrigin` — the position jarvisComputeRoute() actually used
+// to request this specific route — not against the rider's CURRENT live position. Those are
+// different questions. A rider who walks/drifts 100m away from where they requested the route
+// (a very ordinary thing to happen between computing a route and pressing START) has a route
+// that is still perfectly valid — ITS start still matches routeLastOrigin exactly — but the old
+// code compared the route's start point to `currentLat/currentLon` first and would have blocked
+// this valid route as "CORRUPT" purely because the rider had moved. Live-position distance is
+// still computed and surfaced (`liveOriginDistance`), and can still promote a clean route to a
+// WARN so the rider is told the vehicle isn't at the route's start yet — but it never blocks by
+// itself, and it never affects orientation/CORRUPT/REVERSED classification, which are about the
+// route's own geometry versus the truth it was computed from.
+let jarvisRouteIntegrity={checkedAt:0,status:'UNKNOWN',startDistance:null,endDistance:null,liveOriginDistance:null,orientationOk:null,blocked:false,reason:''};
+function jarvisStartOriginGuard(){
+  const route=routeCandidates[selectedRouteIndex]||routeData;
