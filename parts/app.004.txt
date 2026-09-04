@@ -1,0 +1,200 @@
+// silent guess. `roadMatchAttempted`/`roadMatchFound` are always false/false today — there is no
+// road-network candidate source yet (see jarvisRoadNetworkMatch) — but the fields exist now so a
+// future matcher's activation is observable without another round of diagnostics churn.
+let jarvisVehiclePoseDiag={source:null,confidence:null,ageMs:null,roadMatchAttempted:false,roadMatchFound:false,fallbackReason:null};
+function jarvisGetVehiclePose(){
+  const f=jarvisFreeMotion;
+  if(!Number.isFinite(f.displayLat)||!Number.isFinite(f.displayLon))return null;
+  const now=performance.now();
+  const ageMs=f.lastFixAt?Math.max(0,now-f.lastFixAt):null;
+  // Confidence is a simple, explicit function of reported GPS accuracy and fix recency — not a
+  // new estimator, just a named readout of information jarvisFreeMotion already tracks, so a
+  // future road-matcher (or a test) has something coarse-grained to reason about without
+  // reaching into jarvisFreeMotion's internal fields itself.
+  const accTerm=Number.isFinite(f.accuracy)?Math.max(0,1-Math.min(1,f.accuracy/50)):.5;
+  const ageTerm=Number.isFinite(ageMs)?Math.max(0,1-Math.min(1,ageMs/4000)):.5;
+  const confidence=Math.max(0,Math.min(1,accTerm*.6+ageTerm*.4));
+  const gpsPose=jarvisBuildVehiclePose(f.displayLat,f.displayLon,f.displayHeading,f.speedMps,f.lastFixAt||null,{
+    source:'GPS_FREE_MOTION',confidence,
+    continuity:{ageMs,rawHistoryLen:Array.isArray(f.rawHistory)?f.rawHistory.length:0,turnBlend:f.turnBlend}
+  });
+  // Road-network snapping seam (§ "Road-network snapping readiness" below): try it, but this
+  // sandbox/production build has no real road-network candidate source, so it always falls
+  // through to the GPS/free-motion pose today. Kept as a real call (not inlined away) so wiring
+  // in a genuine matcher later only means implementing jarvisRoadNetworkMatch's body.
+  const snapped=jarvisRoadNetworkMatch(gpsPose);
+  const finalPose=snapped||gpsPose;
+  jarvisVehiclePoseDiag={
+    source:finalPose.source,confidence:finalPose.confidence,ageMs,
+    roadMatchAttempted:true,roadMatchFound:!!snapped,
+    fallbackReason:snapped?null:'no road-network candidate source available (Maps JS exposes no navigable road graph); using GPS/free-motion VehiclePose'
+  };
+  return finalPose;
+}
+
+// ===== v6.14.45 road-network matcher seam (architecture only — see NEXT_BATCH_v6.14.45.md §3) =====
+//
+// Google Maps JavaScript API gives polylines for a COMPUTED ROUTE, not a general road-network
+// graph with connectivity/lane/carriageway data the way a Navigation SDK does. There is
+// therefore no real candidate geometry to snap arbitrary GPS positions onto today, and this
+// batch does not invent any. What it adds is the scoring interface/data model a future matcher
+// would need, and an explicit, observable fallback when — as always, currently — no candidates
+// exist, instead of silently behaving as if snapping were unavailable.
+//
+// A road candidate, if a future matcher ever produces one, is expected to look like:
+//   { id, distanceM, segmentHeading, continuityOk, speedPlausible, parallelAmbiguous, ambiguityKind }
+// jarvisScoreRoadCandidate documents (and computes, for whenever real candidates exist) the
+// weighted score a matcher would rank candidates by; it is intentionally unreachable in
+// production today because jarvisRoadNetworkMatch never has a candidate list to score.
+function jarvisScoreRoadCandidate(candidate,pose,prevMatch){
+  if(!candidate||!pose)return Infinity;
+  let score=Math.max(0,Number(candidate.distanceM)||0);
+  if(Number.isFinite(pose.heading)&&Number.isFinite(candidate.segmentHeading)){
+    const mismatch=jarvisHeadingMismatch(pose.heading,candidate.segmentHeading);
+    score+=mismatch>115?260:mismatch>85?110:mismatch>55?35:0;
+  }
+  if(prevMatch&&candidate.continuityOk===false)score+=180;
+  if(pose.speedMps>1&&candidate.speedPlausible===false)score+=140;
+  if(candidate.parallelAmbiguous)score+=90;
+  if(candidate.ambiguityKind==='RAMP'||candidate.ambiguityKind==='CARRIAGEWAY')score+=60;
+  return score;
+}
+function jarvisRoadNetworkMatch(pose){
+  // No road-network candidate source exists in this build (see comment above) — always report
+  // "no candidates" rather than fabricating geometry. A future implementation would gather
+  // nearby candidate segments here, score each with jarvisScoreRoadCandidate, and return the
+  // best one (or null, using the same "explicitly no match" contract) when none clear a
+  // minimum-confidence bar.
+  return null;
+}
+
+function jarvisCameraLeadMeters(zoom){
+  // v6.13.5: 44m looked too centered, 62m looked a little too low.
+  // 54m is the calibrated midpoint target for the lower-middle cockpit position.
+  const z=Number.isFinite(Number(zoom))?Number(zoom):18;
+  return Math.max(8,Math.min(41,41*Math.pow(2,18-z)));
+}
+function jarvisCameraCenterAhead(lat,lng,heading,zoom){
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||!Number.isFinite(heading))return{lat,lng};
+  return jarvisFreeForward(lat,lng,heading,jarvisCameraLeadMeters(zoom));
+}
+
+let jarvisFollowCamera={lat:null,lng:null,heading:null,lastAt:0,lastMoveAt:0,zoom:18};
+let jarvisRerouteCamera={mode:'NORMAL',startedAt:0,rejoinAt:0};
+function jarvisSetRerouteCameraMode(mode){
+  jarvisRerouteCamera.mode=mode||'NORMAL';
+  if(mode==='DEVIATING')jarvisRerouteCamera.startedAt=Date.now();
+  if(mode==='REJOINING')jarvisRerouteCamera.rejoinAt=Date.now();
+}
+function jarvisRerouteCameraZoom(baseZoom){
+  const base=Number.isFinite(Number(baseZoom))?Number(baseZoom):18;
+  if(jarvisRerouteCamera.mode==='DEVIATING'){
+    const t=Math.max(0,Date.now()-(jarvisRerouteCamera.startedAt||Date.now()));
+    // v6.14.14: do not jump to the wide view. Ease out over ~1.8 s so a missed turn
+    // feels like the camera is calmly making room for the new course.
+    const u=Math.min(1,t/1800),e=u*u*(3-2*u);
+    const wide=17.05;
+    return Math.min(base,base+(wide-base)*e);
+  }
+  if(jarvisRerouteCamera.mode==='REJOINING'){
+    const t=Math.max(0,Date.now()-(jarvisRerouteCamera.rejoinAt||Date.now()));
+    const u=Math.min(1,t/3000),e=u*u*(3-2*u);
+    if(u>=1){jarvisRerouteCamera.mode='NORMAL';return base;}
+    return 17.2+(base-17.2)*e;
+  }
+  return base;
+}
+function jarvisResetFollowCamera(){
+  jarvisFollowCamera.lat=null;jarvisFollowCamera.lng=null;jarvisFollowCamera.heading=null;
+  jarvisFollowCamera.lastAt=0;jarvisFollowCamera.lastMoveAt=0;
+}
+function jarvisFollowCameraUpdate(lat,lng,heading,zoom,now,fast=false){
+  if(!navGoogleMap||!Number.isFinite(lat)||!Number.isFinite(lng))return;
+  const c=jarvisFollowCamera;
+  if(!Number.isFinite(c.lat)||!Number.isFinite(c.lng)){
+    c.lat=lat;c.lng=lng;c.heading=Number.isFinite(heading)?heading:0;c.lastAt=now;c.zoom=zoom;
+  }
+  const dt=Math.max(.001,Math.min(.12,(now-(c.lastAt||now))/1000));c.lastAt=now;
+  const rerouteMode=jarvisRerouteCamera.mode;
+  let posTau=fast?.20:.34, headingTau=fast?.25:.42, zoomTau=fast?.18:.42;
+  if(rerouteMode==='NORMAL'){
+    // v6.14.13: heading-up should look composed, not servo-like. Google Navigation's
+    // driving course follows direction of movement; we deliberately low-pass the CAMERA
+    // heading so small GPS/polyline angle noise does not rotate the whole map.
+    const sp=Math.max(0,Number(currentSpeedKmh)||0);
+    headingTau=sp>=40?1.15:sp>=20?.92:.72;
+    if(Number.isFinite(heading)&&Number.isFinite(c.heading)){
+      const delta=Math.abs(jarvisNorm180(heading-c.heading));
+      if(delta<4) heading=c.heading;                 // straight-line dead zone
+      else if(delta>45) headingTau=Math.max(.62,headingTau*.78); // real turn: catch up, still smoothly
+    }
+  }
+  if(rerouteMode==='DEVIATING'){
+    // v6.14.14: off-route camera is deliberately unhurried. Position, vertical lead and
+    // bearing all settle independently so the map never looks like it teleports to rescue
+    // a vehicle that temporarily leaves the viewport.
+    posTau=1.15; headingTau=1.70; zoomTau=.95;
+  }else if(rerouteMode==='REJOINING'){
+    // Once the new route is confirmed, restore the normal cockpit view gradually.
+    posTau=.78; headingTau=1.18; zoomTau=1.05;
+  }
+  const a=1-Math.exp(-dt/posTau);
+  let nextLat=c.lat+(lat-c.lat)*a,nextLng=c.lng+(lng-c.lng)*a;
+  if(rerouteMode==='DEVIATING'){
+    // Hard movement cap: even a large raw-GPS/projection gap is absorbed over time.
+    const moveM=haversine({latitude:c.lat,longitude:c.lng},{latitude:nextLat,longitude:nextLng});
+    const capM=Math.max(1.2,(Math.max(6,Number(currentSpeedKmh)||0)/3.6+4)*dt);
+    if(moveM>capM&&moveM>0){
+      const r=capM/moveM;nextLat=c.lat+(nextLat-c.lat)*r;nextLng=c.lng+(nextLng-c.lng)*r;
+    }
+  }
+  c.lat=nextLat;c.lng=nextLng;
+  if(Number.isFinite(heading))c.heading=smoothHeading(c.heading,heading,1-Math.exp(-dt/headingTau));
+  const desiredZoom=jarvisRerouteCameraZoom(Number.isFinite(Number(zoom))?Number(zoom):18);
+  if(!Number.isFinite(c.zoom))c.zoom=desiredZoom;
+  const zoomA=1-Math.exp(-dt/zoomTau);
+  c.zoom+=(desiredZoom-c.zoom)*zoomA;
+  if(now-c.lastMoveAt<70)return;c.lastMoveAt=now;
+  try{
+    if(navGoogleMap.moveCamera)navGoogleMap.moveCamera({center:{lat:c.lat,lng:c.lng},zoom:c.zoom,heading:headingUpMode?(c.heading||0):0,tilt:mapViewMode==='3D'?55:0});
+    else{navGoogleMap.setCenter({lat:c.lat,lng:c.lng});navGoogleMap.setZoom(c.zoom);navGoogleMap.setHeading?.(headingUpMode?(c.heading||0):0);}
+  }catch(e){}
+}
+
+function jarvisFreeMotionStart(){
+ if(jarvisFreeMotion.raf)return;jarvisFreeMotion.lastFrameAt=performance.now();
+ const tick=now=>{jarvisFreeMotion.raf=requestAnimationFrame(tick);
+  // v6.14.19: one display-location engine for TRACKING / OFF_ROUTE / REROUTING.
+  // Route projection no longer owns the vehicle marker; this engine does.
+  if(!navGoogleMap||!navMapFollow||!Number.isFinite(jarvisFreeMotion.targetLat))return;
+  const dt=Math.max(.001,Math.min(.08,(now-jarvisFreeMotion.lastFrameAt)/1000));jarvisFreeMotion.lastFrameAt=now;
+  let d=(!navSessionStarted?jarvisFreeCorridorTargetSafe(jarvisFreeMotion.targetLat,jarvisFreeMotion.targetLon):{lat:jarvisFreeMotion.targetLat,lng:jarvisFreeMotion.targetLon}),age=Math.max(0,(now-jarvisFreeMotion.lastFixAt)/1000);
+  const escape=!!(jarvisDeviationEscape||jarvisVisualGpsPriority);
+  // v6.13.11: while off-route, real GPS is the authority. Prediction only bridges a short gap.
+  const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:99;
+  const isolated=Date.now()<jarvisDeviationGpsIsolationUntil;
+  const predictAge=isolated?.25:(escape?.65:1.35), predictCap=isolated?3:(escape?10:25);
+  if(jarvisFreeMotion.speedMps>1&&Number.isFinite(jarvisFreeMotion.targetHeading)&&age<predictAge)
+    d=jarvisFreeForward(d.lat,d.lng,jarvisFreeMotion.targetHeading,Math.min(predictCap,jarvisFreeMotion.speedMps*age));
+  const dist=haversine({latitude:jarvisFreeMotion.displayLat,longitude:jarvisFreeMotion.displayLon},{latitude:d.lat,longitude:d.lng});
+  let gain;
+  if(escape){
+    // v6.14.12: during the first moments of REROUTING, transition from the snapped route
+    // to real GPS instead of snapping the squid/camera across lanes. After the handoff,
+    // catch up more strongly so the physical vehicle remains authoritative.
+    const escapeMs=jarvisDeviationStartedAt?Date.now()-jarvisDeviationStartedAt:9999;
+    if(Date.now()<jarvisDeviationGpsIsolationUntil){
+      // v6.14.18: no distance-triggered catch-up burst in the handoff window.
+      // A large GPS/route gap is absorbed continuously instead of creating a rabbit-hop.
+      gain=acc<=15?.080:acc<=25?.065:.052;
+    }else if(escapeMs<1600){
+      gain=acc<=20?(dist>22?.16:.095):(dist>24?.12:.075);
+    }else if(acc<=15) gain=dist>24?.24:(dist>10?.17:.11);
+    else if(acc<=25) gain=dist>26?.21:(dist>11?.15:.095);
+    else gain=dist>28?.18:(dist>12?.13:.085);
+  }else{
+    gain=dist>30?.40:(dist>10?.24:.12);
+  }
+  if(isolated){
+    // v6.14.18: during the first five seconds after departure, do NOT spring the marker
+    // toward each discrete GPS fix. That 1 Hz target chasing is what looks like a rabbit hop.
