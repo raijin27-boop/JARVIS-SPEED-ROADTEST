@@ -1,0 +1,100 @@
+
+'use strict';
+
+let watchId=null,running=false,startTime=null,elapsedBefore=0,lastPos=null,totalDistanceM=0,maxSpeedKmh=0,currentSpeedKmh=0,timerId=null,starting=false;
+let wakeLock=null;
+let jarvisLocationTrackingActive=false;
+let lastAcceptedSpeed=0;
+let resumeGuardUntil=0;
+let goodSamplesAfterResume=0;
+
+// NAV
+let currentLat=null,currentLon=null,currentHeading=null;
+let headingSource='--';
+let courseLastFix=null;
+let courseLastAt=0;
+let destination=null;
+let searchAbort=null;
+
+const $=id=>document.getElementById(id);
+const MAX_REASONABLE_SPEED=220;
+const MAX_ACCEL_KMH_PER_SEC=65;
+const RESUME_GUARD_MS=4500;
+const MAX_ACCEPTABLE_ACCURACY=45;
+
+function elapsedMs(){return elapsedBefore+(running&&startTime?Date.now()-startTime:0)}
+function fmtTime(ms){const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`}
+function haversine(a,b){const R=6371000,p1=a.latitude*Math.PI/180,p2=b.latitude*Math.PI/180,dp=(b.latitude-a.latitude)*Math.PI/180,dl=(b.longitude-a.longitude)*Math.PI/180,x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))}
+function bearing(lat1,lon1,lat2,lon2){
+  const p1=lat1*Math.PI/180,p2=lat2*Math.PI/180,dl=(lon2-lon1)*Math.PI/180;
+  const y=Math.sin(dl)*Math.cos(p2);
+  const x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function normalize180(deg){return ((deg+540)%360)-180}
+function smoothHeading(prev,next,alpha=0.38){
+  if(typeof next!=='number'||!isFinite(next)) return prev;
+  if(typeof prev!=='number'||!isFinite(prev)) return (next+360)%360;
+  return (prev + normalize180(next-prev)*alpha + 360)%360;
+}
+function setTextIf(id,text){const el=$(id);if(el)el.textContent=text}
+function syncLandscapeStatus(){setTextIf('landStatus',$('status')?.textContent||'待機中')}
+
+
+// ===== v2.4 Google Maps cockpit =====
+let navGoogleMap=null, landGoogleMap=null;
+let navSquidOverlay=null, landSquidOverlay=null;
+let navDestMarker=null, landDestMarker=null;
+let navGuideLine=null, landGuideLine=null;
+let nearbyPlaces=[];
+let navNearbyMarkers=[], landNearbyMarkers=[];
+let navNearbyInfo=null, landNearbyInfo=null;
+// v3.5 dual navigation modes
+let navMode=localStorage.getItem('jarvisNavMode')||'ADVENTURE';
+let routeData=null, routeCandidates=[], selectedRouteIndex=0, navRouteLine=null, landRouteLine=null, navAltRouteLines=[];
+let navRouteLabels=[];
+let routePreviewActive=false;
+let navSessionStarted=false;
+let routeRequestSeq=0, routeLastOrigin=null, routeLastAt=0;
+// v6.9 auto reroute trial
+let autoRerouteOffRouteSince=0;
+let autoRerouteOffRouteFixes=0;
+let autoRerouteLastAt=0;
+let autoRerouteBusy=false;
+const AUTO_REROUTE_DISTANCE_M=20;     // v6.14: reroute decision threshold (visual tracking is intentionally faster)
+const VISUAL_ESCAPE_MIN_M=11;          // v6.14.7: squid follows the vehicle before reroute is decided
+const VISUAL_ESCAPE_HEADING_DEG=44;    // v6.14.14: visual handoff follows real course before stale-route pull becomes visible
+const AUTO_REROUTE_HOLD_MS=1200;       // avoid one-fix GPS spikes
+const AUTO_REROUTE_MIN_FIXES=3;        // require consistent evidence
+const AUTO_REROUTE_COOLDOWN_MS=3000;   // reroute quickly, but prevent API storms
+const AUTO_REROUTE_RETRY_MS=6500;      // transient API failure retry while still off-route
+const AUTO_REROUTE_MAX_ACCURACY_M=40;  // weak GPS enters UNCERTAIN instead of forcing reroute
+let jarvisNavTrackingState='TRACKING'; // TRACKING / UNCERTAIN / OFF_ROUTE / REROUTING / ARRIVED
+let jarvisDeviationEscape=false;       // true: reroute state says old route is stale
+let jarvisVisualGpsPriority=false;       // display-only: GPS owns squid temporarily; MUST NOT trigger reroute state
+let jarvisVisualOnRouteFixes=0;
+let jarvisDeviationEvidence=0;
+let jarvisDeviationStartedAt=0;
+let jarvisDeviationGpsIsolationUntil=0; // v6.14.18: first 5s after confirmed departure, GPS owns the vehicle display exclusively
+// v6.14.12: after a new reroute arrives, keep GPS/free-track as visual authority until
+// the physical vehicle is confidently aligned with the NEW route for several fixes.
+let jarvisPendingRouteRejoin=false;
+let jarvisPendingRouteRejoinFixes=0;
+let jarvisPendingRouteRejoinStartedAt=0;
+let jarvisAutoDeviationCount=0;       // 1回目=元ルート復帰、2回目以降=意思尊重
+let jarvisOriginalRoutePath=[];       // START時に選んだ基準ルート
+let jarvisLastMovingHeading=null;     // 現在の走行方向を再検索の意図に使う
+let routeViaPoints=[];                // 地図長押しで作るユーザー指定経由点
+let routeViaMarkers=[];
+let jarvisLongPressTimer=null;
+let jarvisLongPressLatLng=null;
+
+
+// v5.7 voice guidance (Web Speech API)
+let voiceGuideEnabled=true;
+let voiceSelectedId=localStorage.getItem('jarvisVoiceId')||'';
+let voiceRate=Math.min(1.3,Math.max(.7,Number(localStorage.getItem('jarvisVoiceRate')||.96)));
+let voicePitch=Math.min(1.3,Math.max(.7,Number(localStorage.getItem('jarvisVoicePitch')||1)));
+let voiceVolume=Math.min(1,Math.max(0,Number(localStorage.getItem('jarvisVoiceVolume')||1)));
+let voiceStepIndex=0;
+let voiceAnnounced=new Set();
