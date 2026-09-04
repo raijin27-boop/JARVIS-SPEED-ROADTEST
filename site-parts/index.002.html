@@ -7,6 +7,7 @@
 
   <div class="note">
     🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
+    v6.14.53：リルート／復帰の状態機械を強化。GPS精度に応じた12〜20mの逸脱corridorと連続2fix・550ms基準で再検索を早め、リルート未発火を抑制。START時の元ルートを保持し、リルート後に元ルートへ物理的に復帰したことを3fix連続で確認すると元ルートを再採用して一時リルート線を破棄。画面保持はScreen Wake Lockに加えてSTART操作から起動する低負荷video/canvas keep-awake fallbackと500ms監視を追加。<br>
     v6.14.52：実走ログで確認した遠方セグメント誤マッチを修正。実車のmap matching／逸脱判定を現在のroute progress周辺のcorridorに限定し、約775m地点から約7.5km先の重複・近接区間を拾う誤判定を防止。再ルートごとにroute generationを更新して進捗テレメトリ基準を分離。常時点灯はNAVセッション開始時の強制取得＋1秒health watchdog＋visibility/pageshow/focus/user activity再取得を追加し、released sentinelを自動修復する。<br>
     v6.14.51：START ORIGIN GUARDを再設計。ルート起点の現在地整合を最優先し、寺社・大型施設・駅・公園等でGoogleの走行可能な終点が目的地ピンから離れる正常ケースを誤ってCORRUPT扱いしないよう修正。目的地終点差は250m以内を許容、250〜750mを警告、750m超を停止対象とする。<br>
     v6.14.50：v6.14.49でSTARTを誤停止させていたSTART ORIGIN GUARDの目的地距離計算を修正。ルート終端から目的地ピンまでの距離を正しいdestination longitudeで判定する。<br>
@@ -27,14 +28,15 @@
 </div>
 <div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
 font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
-opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.52-ROADTEST-20260905A</div>
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.53-ROADTEST-20260905A</div>
 <script>
-window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.52-ROADTEST-20260905A";
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.53-ROADTEST-20260905A";
 try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
 </script>
 <script src="road-test-fixes.js" defer></script>
 <script src="road-test-start-fix.js" defer></script>
 <script src="road-test-v652.js" defer></script>
+<script src="road-test-v653.js" defer></script>
 <script src="road-test-ui.js" defer></script>
 </body>
 </html>
