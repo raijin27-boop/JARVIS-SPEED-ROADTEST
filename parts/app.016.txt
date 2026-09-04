@@ -1,0 +1,200 @@
+  const pts=jarvisActiveViaPoints().map(p=>({lat:p.lat,lng:p.lng}));
+  if(strategy==='REJOIN'){
+    const p=jarvisFindRejoinWaypoint();
+    if(p)pts.push(p);
+  }
+  return pts.slice(0,4).map(p=>({location:{lat:p.lat,lng:p.lng}}));
+}
+
+function jarvisRouteInitialHeading(route){
+  const pts=route?.path||[];
+  if(pts.length<2)return null;
+  let acc=0;
+  for(let i=1;i<pts.length;i++){
+    const a=jarvisNormalizePathPoint(pts[i-1]),b=jarvisNormalizePathPoint(pts[i]);
+    if(!a||!b)continue;
+    const d=haversine({latitude:a.lat,longitude:a.lng},{latitude:b.lat,longitude:b.lng});
+    acc+=d;
+    if(acc>=18||i===pts.length-1)return bearing(a.lat,a.lng,b.lat,b.lng);
+  }
+  return null;
+}
+function jarvisRouteCandidateScore(route,travelHeading){
+  const dur=Math.max(1,Number(route?.durationMillis)||1e12);
+  const initial=jarvisRouteInitialHeading(route);
+  const mismatch=(Number.isFinite(travelHeading)&&Number.isFinite(initial))?jarvisHeadingMismatch(travelHeading,initial):0;
+  // Strongly reject routes that begin behind the rider, but still keep duration relevant.
+  const reversePenalty=mismatch>125?45*60*1000:mismatch>95?18*60*1000:mismatch>70?6*60*1000:mismatch*1400;
+  return {score:dur+reversePenalty,mismatch,initial,duration:dur};
+}
+
+function jarvisRebaseMotionToCurrentRoute(lat,lon,speedKmh){
+  jarvisMotionReset();
+  const p=jarvisMotionProject(lat,lon);
+  if(!p)return null;
+  const routeHeading=jarvisMotionHeadingAtS(p.s);
+  const travel=jarvisTravelHeading();
+  const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,routeHeading):0;
+  // API origin is a few seconds old by the time the response arrives. Up to 90m is acceptable
+  // if the new route still points roughly where the vehicle is actually travelling.
+  const maxDist=(Number(speedKmh)||0)>=7?90:65;
+  if(p.distance>maxDist||(Number(speedKmh)>=7&&mismatch>105))return null;
+  const now=performance.now();
+  jarvisMotion.targetS=p.s;
+  jarvisMotion.displayS=p.s;
+  jarvisMotion.lastProjection=p;
+  jarvisMotion.lastFixAt=now;
+  jarvisMotion.speedMps=Math.max(0,Math.min(45,(Number(speedKmh)||0)/3.6));
+  jarvisMotion.displayHeading=routeHeading;
+  return p;
+}
+
+
+let jarvisUTurnRecovery=false;
+let jarvisUTurnAlignedFixes=0;
+let jarvisUTurnRecoveryStartedAt=0;
+let jarvisUTurnRecoveryStartPos=null;
+
+function jarvisNewRouteRecoveryState(lat,lon,speedKmh){
+  if(!jarvisMotionPreparePath())return null;
+  const p=jarvisMotionProject(lat,lon);
+  if(!p)return null;
+  const routeHeading=jarvisMotionHeadingAtS(p.s);
+  const travel=jarvisTravelHeading();
+  const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,routeHeading):0;
+  return {p,routeHeading,travel,mismatch,distance:p.distance,speed:Number(speedKmh)||0};
+}
+
+function jarvisEnterUTurnRecovery(state){
+  jarvisUTurnRecovery=true;
+  jarvisUTurnAlignedFixes=0;
+  jarvisUTurnRecoveryStartedAt=Date.now();
+  jarvisUTurnRecoveryStartPos=(typeof currentLat==='number'&&typeof currentLon==='number')?{lat:currentLat,lng:currentLon}:null;
+  jarvisDeviationEscape=true; // real vehicle remains the squid authority until it faces the route.
+  jarvisSetRouteGuidanceAppearance(true); // show the NEW route clearly; it is now guidance, not stale.
+  jarvisSetStatus('安全な場所でUターンしてください','warn');
+  if(voiceGuideEnabled)jarvisSpeak('安全な場所でUターンしてください',true);
+}
+
+function jarvisExitUTurnRecovery(){
+  jarvisUTurnRecovery=false;
+  jarvisUTurnAlignedFixes=0;
+  jarvisUTurnRecoveryStartedAt=0;
+  jarvisUTurnRecoveryStartPos=null;
+}
+
+async function jarvisAutoReroute(strategy=null){
+  if(autoRerouteBusy||!navSessionStarted||navMode!=='ROUTE'||!destination)return;
+  const now=Date.now();
+  if(now-autoRerouteLastAt<AUTO_REROUTE_COOLDOWN_MS)return;
+  autoRerouteBusy=true;
+  autoRerouteLastAt=now;
+  jarvisNavTrackingState='REROUTING';
+  jarvisResetAutoRerouteWatch();
+  jarvisAutoDeviationCount++;
+  jarvisSetStatus('現在地と進行方向からルートを再検索中…','warn');
+  if(voiceGuideEnabled&&jarvisAutoDeviationCount===1)jarvisSpeak('ルートを再検索します',true);
+  try{
+    await jarvisComputeRoute(true,true,'HEADING');
+  }finally{
+    autoRerouteBusy=false;
+  }
+}
+function jarvisAutoRerouteUpdate(coords,speedKmh){
+  if(!navSessionStarted||navMode!=='ROUTE'||!routeData){
+    jarvisNavTrackingState='TRACKING';
+    jarvisResetAutoRerouteWatch();return;
+  }
+  const acc=Number(coords?.accuracy);
+  if(!Number.isFinite(acc)||acc>AUTO_REROUTE_MAX_ACCURACY_M){
+    jarvisNavTrackingState='UNCERTAIN';
+    if(!jarvisDeviationEscape)jarvisResetAutoRerouteWatch();
+    return;
+  }
+  if(!Number.isFinite(speedKmh)||speedKmh<2){
+    if(!jarvisDeviationEscape)jarvisResetAutoRerouteWatch();
+    return;
+  }
+
+  const lat=Number(coords.latitude),lon=Number(coords.longitude);
+  const near=jarvisNearestActiveRoute(lat,lon);
+  if(!near)return;
+  const moveHeading=Number.isFinite(currentHeading)?currentHeading:jarvisLastMovingHeading;
+  const mismatch=jarvisHeadingMismatch(moveHeading,near.heading);
+  const lateral=near.distance;
+
+  // v6.14: U-turn is not a state machine anymore. If the vehicle keeps going, reroute
+  // from the real position + heading rather than waiting for a return to the old route.
+  if(jarvisUTurnRecovery)jarvisExitUTurnRecovery();
+
+  // v6.14.13: a decisive course change is off-route evidence even while still close to
+  // the old polyline at an intersection. Do not wait for 8m of lateral separation.
+  const headingWrong=speedKmh>=6&&lateral>2&&mismatch>52;
+  const visualFar=lateral>15;
+  const rerouteFar=lateral>AUTO_REROUTE_DISTANCE_M;
+  const strongFar=lateral>45;
+
+  if(visualFar||headingWrong){
+    jarvisNavTrackingState='OFF_ROUTE';
+    if(!autoRerouteOffRouteSince)autoRerouteOffRouteSince=Date.now();
+    autoRerouteOffRouteFixes++;
+    jarvisDeviationEvidence+=strongFar?2:1;
+    const held=Date.now()-autoRerouteOffRouteSince;
+
+    const escapeHold=headingWrong?260:450;
+    if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=2&&held>=escapeHold)
+      jarvisEnterDeviationEscape(headingWrong?'HEADING':'OFF_ROUTE');
+
+    const rerouteReady=(rerouteFar||headingWrong||strongFar)&&
+      (autoRerouteOffRouteFixes>=AUTO_REROUTE_MIN_FIXES||jarvisDeviationEvidence>=4)&&
+      held>=AUTO_REROUTE_HOLD_MS;
+    if(jarvisDeviationEscape&&rerouteReady&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=AUTO_REROUTE_COOLDOWN_MS)
+      jarvisAutoReroute('HEADING');
+    else if(jarvisDeviationEscape&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=AUTO_REROUTE_RETRY_MS&&held>5000)
+      jarvisAutoReroute('HEADING');
+  }else if(lateral<8&&mismatch<35){
+    jarvisNavTrackingState='TRACKING';
+    if(!jarvisDeviationEscape)jarvisResetAutoRerouteWatch();
+  }
+}
+
+async function jarvisComputeRoute(force=false,preserveNavigation=false,rerouteStrategy='NORMAL'){
+  if(navMode!=='ROUTE'||!destination||typeof currentLat!=='number'||typeof currentLon!=='number'||!jarvisGoogleReady)return;
+  // v6.4: v6.3のSTART固定を維持。走行中は自動再計算せず、再検索はREROUTE操作時だけ。
+  if(navSessionStarted&&!force)return;
+  const origin={latitude:currentLat,longitude:currentLon};
+  const moved=routeLastOrigin?haversine(routeLastOrigin,origin):99999;
+  if(!force && routeData && Date.now()-routeLastAt<30000 && moved<80)return;
+  const seq=++routeRequestSeq;setTextIf('routeEta','ルート取得中…');jarvisSetStatus('道路ルート候補を計算中…');
+  try{
+    const {Route,TravelMode,RoutingPreference,PolylineQuality,TrafficModel}=await google.maps.importLibrary('routes');
+    // Google Routes の TWO_WHEELER は日本未対応（2026-09時点）のため、日本では DRIVING を土台にする。
+    const fastReroute=false;
+    const travelHeading=(preserveNavigation&&Number.isFinite(jarvisTravelHeading()))?Math.round((jarvisTravelHeading()+360)%360):null;
+    const originWaypoint=travelHeading===null?{lat:currentLat,lng:currentLon}:{lat:currentLat,lng:currentLon,heading:travelHeading};
+    const req={
+      origin:originWaypoint,
+      destination:{lat:destination.lat,lng:destination.lon},
+      travelMode:TravelMode?.DRIVING||'DRIVING',
+      routingPreference:RoutingPreference?.TRAFFIC_AWARE_OPTIMAL||'TRAFFIC_AWARE_OPTIMAL',
+      trafficModel:TrafficModel?.BEST_GUESS||'BEST_GUESS',
+      computeAlternativeRoutes:true,
+      intermediates:jarvisRequestIntermediates(rerouteStrategy),
+      // ユーザー長押し経由地、または意思尊重リルート用の一時経由点を反映する。
+      // 走行中の高ズームでも道路のカーブ・交差点形状に沿うよう、overviewではなく高精細な経路点列を取得する。
+      polylineQuality:PolylineQuality?.HIGH_QUALITY||'HIGH_QUALITY',
+      fields:['path','legs','distanceMeters','durationMillis','staticDurationMillis','routeLabels']
+    };
+    const out=await Route.computeRoutes(req);if(seq!==routeRequestSeq)return;
+    // START後に古い検索結果が返ってきても、ナビ走行状態は絶対に解除しない。
+    if(navSessionStarted&&!preserveNavigation)return;
+    let routes=(out?.routes||[]).slice();
+    if(!routes.length)throw new Error('ルート候補なし');
+    // v6.14: for reroutes, score alternatives by current travel heading first, ETA second.
+    // This specifically avoids divided-road routes that start by sending the rider backwards.
+    if(preserveNavigation){
+      const h=jarvisTravelHeading();
+      routes.sort((a,b)=>jarvisRouteCandidateScore(a,h).score-jarvisRouteCandidateScore(b,h).score);
+    }else{
+      routes.sort((a,b)=>(Number(a.durationMillis)||Infinity)-(Number(b.durationMillis)||Infinity));
+    }
