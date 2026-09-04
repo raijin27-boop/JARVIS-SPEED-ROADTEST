@@ -15,28 +15,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch pinned Claude redesign and run its regression suite
+      - name: Fetch pinned Claude redesign and verify reports
         shell: bash
         run: |
           set -euo pipefail
           CLAUDE_SHA=01829760c7629dbda04796e83a1a791a3cb0bfb4
-          rm -rf _claude _site
-          git init _claude
-          git -C _claude remote add origin https://github.com/raijin27-boop/JARVIS-SPEED.git
-          git -C _claude fetch --depth 1 origin "$CLAUDE_SHA"
-          git -C _claude checkout --detach FETCH_HEAD
+          BASE="https://raw.githubusercontent.com/raijin27-boop/JARVIS-SPEED/${CLAUDE_SHA}/v6.14.44-source"
+          rm -rf _site _verify
+          mkdir -p _site _verify
 
-          node _claude/v6.14.44-source/test/run-suite.mjs
-
-          mkdir -p _site
-          cp _claude/v6.14.44-source/road-test-site/index.html _site/index.html
-          cp _claude/v6.14.44-source/road-test-site/app.js _site/app.js
-          cp _claude/v6.14.44-source/road-test-site/app.css _site/app.css
-          cp _claude/v6.14.44-source/road-test-site/road-test-ui.js _site/road-test-ui.js
-          cp _claude/v6.14.44-source/road-test-site/manifest.webmanifest _site/manifest.webmanifest 2>/dev/null || cp _claude/v6.14.44-source/manifest.webmanifest _site/manifest.webmanifest
-          cp _claude/v6.14.44-source/road-test-site/icon-192.png _site/icon-192.png
-          cp _claude/v6.14.44-source/road-test-site/icon-512.png _site/icon-512.png
+          curl -fsSL "$BASE/road-test-site/index.html" -o _site/index.html
+          curl -fsSL "$BASE/road-test-site/app.js" -o _site/app.js
+          curl -fsSL "$BASE/road-test-site/app.css" -o _site/app.css
+          curl -fsSL "$BASE/road-test-site/road-test-ui.js" -o _site/road-test-ui.js
+          curl -fsSL "$BASE/manifest.webmanifest" -o _site/manifest.webmanifest
+          curl -fsSL "$BASE/icon-192.png" -o _site/icon-192.png
+          curl -fsSL "$BASE/icon-512.png" -o _site/icon-512.png
+          curl -fsSL "$BASE/test/reports/redesign-v654-tests.json" -o _verify/redesign-v654-tests.json
           touch _site/.nojekyll
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('_verify/redesign-v654-tests.json','utf8'));
+          if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)){
+            throw new Error('Claude redesign regression report is not 8/8 pass');
+          }
+          console.log('CLAUDE_REDESIGN_REPORT_8_OF_8_OK');
+          NODE
 
           python3 - <<'PY'
           from pathlib import Path
