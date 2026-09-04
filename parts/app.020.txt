@@ -1,0 +1,200 @@
+  try{
+    jarvisSetStatus(`「${q}」を目的地として検索中…`);
+    const placesLib=await google.maps.importLibrary('places');
+    const PlaceClass=placesLib.Place || google.maps.places.Place;
+    const Rank=placesLib.SearchByTextRankPreference || google.maps.places.SearchByTextRankPreference;
+    if(!PlaceClass?.searchByText) throw new Error('Text Searchを利用できません');
+    let candidates=[];
+    const radii=(typeof currentLat==='number'&&typeof currentLon==='number')?[8,20,50]:[null];
+    for(const radiusKm of radii){
+      const request={
+        fields:['displayName','formattedAddress','location','businessStatus'], textQuery:q,
+        rankPreference:Rank?.RELEVANCE || 'RELEVANCE', maxResultCount:20, language:'ja', region:'jp'
+      };
+      if(radiusKm!=null) request.locationRestriction=jarvisBoundsAround(currentLat,currentLon,radiusKm);
+      const out=await PlaceClass.searchByText(request);
+      const places=(out?.places||[]).filter(p=>String(p.businessStatus||'').toUpperCase()!=='CLOSED_PERMANENTLY');
+      for(const place of places){
+        if(!place.location) continue;
+        const loc=place.location;
+        const lat=typeof loc.lat==='function'?loc.lat():Number(loc.lat);
+        const lon=typeof loc.lng==='function'?loc.lng():Number(loc.lng);
+        if(!Number.isFinite(lat)||!Number.isFinite(lon)) continue;
+        const name=place.displayName||q, address=place.formattedAddress||'';
+        const relevance=jarvisPlaceRelevance(q,name,address);
+        const distance=(typeof currentLat==='number'&&typeof currentLon==='number')?haversine({latitude:currentLat,longitude:currentLon},{latitude:lat,longitude:lon}):Infinity;
+        candidates.push({name,address,lat,lon,relevance,distance});
+      }
+      if(candidates.some(x=>x.relevance>=700)) break;
+    }
+    // Exact/name-containing matches outrank fuzzy nearby results. Distance breaks ties.
+    candidates.sort((a,b)=>(b.relevance-a.relevance)||(a.distance-b.distance));
+    const best=candidates[0];
+    if(!best) throw new Error('候補が見つかりません');
+    // Avoid silently choosing a fuzzy unrelated result (e.g. a clinic for 東大寺).
+    if(best.relevance<420) throw new Error('入力名に一致する地点が見つかりません');
+    saveDestination({name:best.name,lat:best.lat,lon:best.lon});
+    jarvisSetStatus(`目的地SET：${best.name}`,'ok');
+    if(box) box.innerHTML='';
+    updateNav();
+    return true;
+  }catch(e){
+    jarvisSetStatus('直接設定できません：'+e.message+'。候補から選んでください。','warn');
+    await jarvisSearchPlaces();
+    return false;
+  }
+}
+
+async function jarvisSearchPlaces(){
+  const input = document.getElementById('placeInput');
+  const box = document.getElementById('placeResults');
+  if (!input || !box) return;
+  const q = input.value.trim();
+  box.innerHTML = '';
+  if (q.length < 2) {
+    jarvisSetStatus(jarvisGoogleReady ? '2文字以上入力してください。' : 'Google検索の準備待ちです。');
+    return;
+  }
+  if (!jarvisGoogleReady) {
+    jarvisSetStatus('先にGoogle Maps APIキーを保存してください。','warn');
+    return;
+  }
+
+  if(await jarvisSearchNearby(q,box)) return;
+  nearbyPlaces=[]; jarvisClearNearbyMarkers();
+
+  // 通常の店名/施設名は、まず現在地に近いText Search結果を表示。
+  // 1件しかない場合もそこで終了せず、Autocompleteの関連候補を追加して選択肢を増やす。
+  const hadNearest = await jarvisSearchTextNearest(q,box);
+
+  try{
+    // New Places Autocomplete Data API when available.
+    if (google.maps.places.AutocompleteSuggestion) {
+      const req = {
+        input: q,
+        sessionToken: jarvisSessionToken,
+        includedRegionCodes: ['jp'],
+        language: 'ja'
+      };
+      // Bias toward current GPS position without requiring it.
+      if (typeof currentLat === 'number' && typeof currentLon === 'number') {
+        req.locationBias = {center:{lat:currentLat,lng:currentLon}, radius:15000};
+        req.origin = {lat:currentLat,lng:currentLon};
+      }
+      const {suggestions} = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
+      if (suggestions?.length && typeof currentLat === 'number' && typeof currentLon === 'number') {
+        suggestions.sort((a,b)=>{
+          const da=Number(a?.placePrediction?.distanceMeters); const db=Number(b?.placePrediction?.distanceMeters);
+          if(Number.isFinite(da)&&Number.isFinite(db)) return da-db;
+          if(Number.isFinite(da)) return -1; if(Number.isFinite(db)) return 1; return 0;
+        });
+      }
+      if (!suggestions || !suggestions.length) {
+        if(!hadNearest) jarvisSetStatus('候補が見つかりません。住所を少し短くするか店名を変えて試してください。','warn');
+        return;
+      }
+      jarvisSetStatus(`現在地優先で候補を表示中`,'ok');
+      const renderedNames=new Set(Array.from(box.querySelectorAll('.place-result strong')).map(x=>(x.textContent||'').trim()));
+      let added=0;
+      for (const suggestion of suggestions) {
+        if(box.querySelectorAll('.place-result').length>=8) break;
+        const pred = suggestion.placePrediction;
+        if (!pred) continue;
+        const title = pred.mainText?.text || pred.text?.text || q;
+        const fullText = pred.text?.text || `${title} ${pred.secondaryText?.text||''}`;
+        // Text Searchで既に近距離候補がある時は、入力語を実際に含む候補だけ補足する。
+        // 例: 「東大寺」→ 東大寺大仏殿/南大門/二月堂などは許可、無関係な池や店舗は除外。
+        if(hadNearest){
+          const nq=q.replace(/[\s　]+/g,'').toLowerCase();
+          const nf=fullText.replace(/[\s　]+/g,'').toLowerCase();
+          if(nq && !nf.includes(nq)) continue;
+        }
+        if(renderedNames.has(title.trim())) continue;
+        renderedNames.add(title.trim());
+        added++;
+        const btn = document.createElement('button');
+        btn.className = 'place-result';
+        const dm=Number(pred.distanceMeters);
+        const near=Number.isFinite(dm)?(dm<1000?`${Math.round(dm)}m`:`${(dm/1000).toFixed(1)}km`):'';
+        const sub0 = pred.secondaryText?.text || pred.text?.text || '';
+        const sub = near ? `${near} · ${sub0}` : sub0;
+        btn.innerHTML = '<strong></strong><span></span>';
+        btn.querySelector('strong').textContent = title;
+        btn.querySelector('span').textContent = sub;
+        btn.addEventListener('click', async () => {
+          try{
+            const place = pred.toPlace();
+            await place.fetchFields({fields:['displayName','formattedAddress','location']});
+            if (!place.location) throw new Error('座標を取得できません');
+            const name = place.displayName || title;
+            const loc=place.location;
+            const lat=typeof loc.lat==='function'?loc.lat():Number(loc.lat);
+            const lon=typeof loc.lng==='function'?loc.lng():Number(loc.lng);
+            saveDestination({name,lat,lon});
+            jarvisSetStatus(`目的地SET：${name}`,'ok');
+            box.innerHTML = '';
+            jarvisSessionToken = new google.maps.places.AutocompleteSessionToken();
+            updateNav();
+          }catch(e){ jarvisSetStatus('目的地取得エラー：'+e.message,'bad'); }
+        });
+        box.appendChild(btn);
+      }
+      return;
+    }
+
+    // Fallback for browsers/library versions exposing legacy AutocompleteService.
+    const svc = new google.maps.places.AutocompleteService();
+    svc.getPlacePredictions({
+      input:q,
+      componentRestrictions:{country:'jp'},
+      sessionToken:jarvisSessionToken,
+      ...(typeof currentLat==='number' && typeof currentLon==='number' ? {
+        locationBias:{center:{lat:currentLat,lng:currentLon},radius:15000}, origin:new google.maps.LatLng(currentLat,currentLon)
+      } : {})
+    }, (preds,status)=>{
+      if(status!==google.maps.places.PlacesServiceStatus.OK || !preds?.length){
+        jarvisSetStatus('候補が見つかりません。','warn'); return;
+      }
+      jarvisSetStatus(`${preds.length}件の候補`);
+      const dummy=document.createElement('div');
+      const details=new google.maps.places.PlacesService(dummy);
+      preds.slice(0,6).forEach(p=>{
+        const btn=document.createElement('button'); btn.className='place-result';
+        btn.innerHTML='<strong></strong><span></span>';
+        btn.querySelector('strong').textContent=p.structured_formatting?.main_text||p.description;
+        btn.querySelector('span').textContent=p.structured_formatting?.secondary_text||p.description;
+        btn.onclick=()=>details.getDetails({placeId:p.place_id,fields:['name','geometry','formatted_address'],sessionToken:jarvisSessionToken},(pl,st)=>{
+          if(st!==google.maps.places.PlacesServiceStatus.OK||!pl?.geometry?.location){jarvisSetStatus('目的地取得に失敗しました。','bad');return}
+          saveDestination({name:pl.name||p.description,lat:pl.geometry.location.lat(),lon:pl.geometry.location.lng()});
+          jarvisSetStatus(`目的地SET：${pl.name||p.description}`,'ok'); box.innerHTML='';
+          jarvisSessionToken=new google.maps.places.AutocompleteSessionToken(); updateNav();
+        });
+        box.appendChild(btn);
+      });
+    });
+  }catch(e){
+    jarvisSetStatus('Google検索エラー：' + e.message,'bad');
+  }
+}
+
+function jarvisBootV2(){
+  // Remove old v1.5 Nominatim UI if any remnants exist.
+  ['searchBtn','searchResults','searchStatus','destQuery'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el && !['googleStatus','placeResults'].includes(id)) el.style.display='none';
+  });
+
+  const saved = localStorage.getItem(JARVIS_KEY_STORAGE);
+  if (saved) jarvisLoadGoogle(saved);
+
+  document.getElementById('saveKeyBtn')?.addEventListener('click',()=>{
+    const key=document.getElementById('apiKeyInput').value.trim();
+    if(!key){jarvisSetStatus('APIキーを入力してください。','warn');return}
+    localStorage.setItem(JARVIS_KEY_STORAGE,key);
+    document.getElementById('apiKeyInput').value='';
+    jarvisLoadGoogle(key);
+  });
+
+  document.getElementById('changeKeyBtn')?.addEventListener('click',()=>{
+    localStorage.removeItem(JARVIS_KEY_STORAGE);
+    document.getElementById('keySetup')?.classList.remove('hidden');
