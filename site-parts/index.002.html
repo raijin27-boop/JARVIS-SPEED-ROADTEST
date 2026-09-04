@@ -7,17 +7,10 @@
 
   <div class="note">
     🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
-    v6.14.53：リルート／復帰の状態機械を強化。GPS精度に応じた12〜20mの逸脱corridorと連続2fix・550ms基準で再検索を早め、リルート未発火を抑制。START時の元ルートを保持し、リルート後に元ルートへ物理的に復帰したことを3fix連続で確認すると元ルートを再採用して一時リルート線を破棄。画面保持はScreen Wake Lockに加えてSTART操作から起動する低負荷video/canvas keep-awake fallbackと500ms監視を追加。<br>
-    v6.14.52：実走ログで確認した遠方セグメント誤マッチを修正。実車のmap matching／逸脱判定を現在のroute progress周辺のcorridorに限定し、約775m地点から約7.5km先の重複・近接区間を拾う誤判定を防止。再ルートごとにroute generationを更新して進捗テレメトリ基準を分離。常時点灯はNAVセッション開始時の強制取得＋1秒health watchdog＋visibility/pageshow/focus/user activity再取得を追加し、released sentinelを自動修復する。<br>
-    v6.14.51：START ORIGIN GUARDを再設計。ルート起点の現在地整合を最優先し、寺社・大型施設・駅・公園等でGoogleの走行可能な終点が目的地ピンから離れる正常ケースを誤ってCORRUPT扱いしないよう修正。目的地終点差は250m以内を許容、250〜750mを警告、750m超を停止対象とする。<br>
-    v6.14.50：v6.14.49でSTARTを誤停止させていたSTART ORIGIN GUARDの目的地距離計算を修正。ルート終端から目的地ピンまでの距離を正しいdestination longitudeで判定する。<br>
-    v6.14.49：到着判定を目的地ピン20m以内へ変更し、到着後は目的地・ルート表示を自動消去。NAV中のWake LockがiPhone側で解除された場合もrelease/visibility/pageshow/focus/watchdogから自動再取得する常時点灯強化を追加。ARRIVED後の再ルート復活も遮断。<br>
-    v6.14.48：実走ログを基準に、走行中ルート線を新Polyline生成成功後に差し替えるatomic swapへ変更し、ルート線消失時の自己復旧も追加。再ルート直後6.5秒は新ルートとの整合確認を優先し、十分近い位置でのOFF_ROUTE再発・再検索連鎖を抑制。自車表示とGPS推定ターゲットの乖離も速度連動で制限し、40〜60m級の表示ジャンプを抑える。ロードテスト画面はフルスクリーン地図＋オーバーレイ化し、JSONは「ファイル保存」と「共有」を分離。<br>
-    v6.14.44：v6.14.18を基準に、v6.14.19 display-engine分離パッチ、v6.14.24 TURN GUARD、v6.14.26 GUIDANCE CENTER、v6.14.27 LOCAL CORRIDOR、v6.14.28 REROUTE CORRIDORを統合。加えてARRIVAL SNAP、音声案内重複修正、START ORIGIN GUARD、routeIntegrity/motionDiag診断を実装。<br>
-    v6.14.18：GPS/free-motion位置表示を独立安定化。速度・fix間隔・精度から物理的に妥当な移動量へ制限し、直進時の横方向ノイズを抑制。実際の右左折ではcourse変化に応じフィルタを緩め、リルート後の再吸着は連続一致で確認。<br>
-    v6.14.14：ルート逸脱時のカメラ所作を再設計。逸脱時のズームアウト・位置追従・地図回転を滑らかにし、通常案内では実車の進行方向を優先。<br>
-    v6.14.0：リルートを現在地＋進行方向基準へ刷新。代替ルートを進行方向適合度＋所要時間で選択し、到着判定もルート終端と組み合わせて誤判定を防止。<br>
-    「近くのコンビニ／ガソリンスタンド／トイレ／駐車場／スーパー」等は現在地5km以内をNearby Searchで近い順に表示。AUTO/DARK/LIGHTも維持。<br>
+    v6.15.0：Claude/Codex独立レビューを反映したナビ中枢統合版。v6.14.48〜53のruntime monkey patchを読み込まず、map matching・逸脱/リルート状態遷移・route ownership/atomic描画・route generation・元ルート復帰・Wake Lock・START guardをcanonical app.js内の単一coreへ統合。位置投影は進捗corridor内を原則とし、無制限full-scanを廃止。リルート証拠蓄積は1系統、ルート線描画も1系統、Wake Lock再取得も1系統へ整理。<br>
+    v6.14.53：リルート／復帰の状態機械を強化。GPS精度に応じた12〜20mの逸脱corridorと連続2fix・550ms基準で再検索を早め、リルート未発火を抑制。START時の元ルートを保持し、リルート後に元ルートへ物理的に復帰したことを3fix連続で確認すると元ルートを再採用して一時リルート線を破棄。<br>
+    v6.14.52：実走ログで確認した遠方セグメント誤マッチを修正。実車のmap matching／逸脱判定を現在のroute progress周辺のcorridorに限定。<br>
+    v6.14.51：START ORIGIN GUARDを再設計。ルート起点の現在地整合を最優先し、大型POIの走行可能終点ズレを許容。<br>
     ※ 走行中の画面操作はせず、安全な場所に停車して操作してください。
   </div>
 </div>
@@ -28,15 +21,11 @@
 </div>
 <div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
 font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
-opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.53-ROADTEST-20260905A</div>
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.15.0-INTEGRATED-20260905A</div>
 <script>
-window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.53-ROADTEST-20260905A";
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.15.0-INTEGRATED-20260905A";
 try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
 </script>
-<script src="road-test-fixes.js" defer></script>
-<script src="road-test-start-fix.js" defer></script>
-<script src="road-test-v652.js" defer></script>
-<script src="road-test-v653.js" defer></script>
 <script src="road-test-ui.js" defer></script>
 </body>
 </html>
