@@ -15,53 +15,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch pinned Claude redesign and verify reports
+      - name: Deploy verified Claude artifact unchanged
         shell: bash
         run: |
           set -euo pipefail
-          CLAUDE_SHA=01829760c7629dbda04796e83a1a791a3cb0bfb4
-          BASE="https://raw.githubusercontent.com/raijin27-boop/JARVIS-SPEED/${CLAUDE_SHA}/v6.14.44-source"
-          rm -rf _site _verify
-          mkdir -p _site _verify
-
-          curl -fsSL "$BASE/road-test-site/index.html" -o _site/index.html
-          curl -fsSL "$BASE/road-test-site/app.js" -o _site/app.js
-          curl -fsSL "$BASE/road-test-site/app.css" -o _site/app.css
-          curl -fsSL "$BASE/road-test-site/road-test-ui.js" -o _site/road-test-ui.js
-          curl -fsSL "$BASE/manifest.webmanifest" -o _site/manifest.webmanifest
-          curl -fsSL "$BASE/icon-192.png" -o _site/icon-192.png
-          curl -fsSL "$BASE/icon-512.png" -o _site/icon-512.png
-          curl -fsSL "$BASE/test/reports/redesign-v654-tests.json" -o _verify/redesign-v654-tests.json
+          rm -rf _site /tmp/claude-v654.zip
+          mkdir -p _site
+          curl -fsSL 'https://sdmntprnznorth.oaiusercontent.com/files/00000000-66e8-820b-b22d-bd1eb164145f/raw?se=2026-09-04T19%3A46%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=fcdc8074-868e-5d02-b19e-24bf22e00e6f&skoid=f5e14fda-2af7-44a3-9d18-d372ffcad871&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-04T07%3A43%3A48Z&ske=2026-09-05T07%3A43%3A48Z&sks=b&skv=2026-02-06&sig=VW2HbrvcRiEesbwwfIUm0%2BxuqH/znzQ6GNovufPqA/A%3D' -o /tmp/claude-v654.zip
+          unzip -q /tmp/claude-v654.zip -d _site
           touch _site/.nojekyll
-
-          node - <<'NODE'
-          const fs=require('fs');
-          const r=JSON.parse(fs.readFileSync('_verify/redesign-v654-tests.json','utf8'));
-          if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)){
-            throw new Error('Claude redesign regression report is not 8/8 pass');
-          }
-          console.log('CLAUDE_REDESIGN_REPORT_8_OF_8_OK');
-          NODE
-
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('_site/index.html')
-          s=p.read_text()
-          s=s.replace('v6.14.47-ROADTEST-20260904T191348Z','CLAUDE-v6.14.54-01829760')
-          s=s.replace('<title>JARVIS Road Test CLAUDE-v6.14.54-01829760</title>','<title>JARVIS Claude v6.14.54 Road Test</title>')
-          p.write_text(s)
-          PY
-
           node --check _site/app.js
           node --check _site/road-test-ui.js
-          grep -q 'CLAUDE-v6.14.54-01829760' _site/index.html
+          node - <<'NODE'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('_site/redesign-v654-tests.json','utf8'));
+          if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)) throw new Error('Claude redesign report is not 8/8 pass');
+          console.log('CLAUDE_REDESIGN_REPORT_8_OF_8_OK');
+          NODE
+          grep -q 'CLAUDE-v6.14.54-EXPORT' _site/index.html
           grep -q 'jarvisCorridorMatch' _site/app.js
           grep -q 'jarvisCommitRoute' _site/app.js
           grep -q 'jarvisVerifyRouteRendered' _site/app.js
           grep -q 'jarvisWakeWanted' _site/app.js
           ! grep -q 'road-test-v652.js' _site/index.html
           ! grep -q 'road-test-v653.js' _site/index.html
-          echo "CLAUDE_V654_PINNED_TEST_BUILD_OK"
+          echo 'CLAUDE_V654_ARTIFACT_READY'
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
