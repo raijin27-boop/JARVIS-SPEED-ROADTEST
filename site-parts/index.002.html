@@ -7,10 +7,9 @@
 
   <div class="note">
     🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
-    v6.15.0：Claude/Codex独立レビューを反映したナビ中枢統合版。v6.14.48〜53のruntime monkey patchを読み込まず、map matching・逸脱/リルート状態遷移・route ownership/atomic描画・route generation・元ルート復帰・Wake Lock・START guardをcanonical app.js内の単一coreへ統合。位置投影は進捗corridor内を原則とし、無制限full-scanを廃止。リルート証拠蓄積は1系統、ルート線描画も1系統、Wake Lock再取得も1系統へ整理。<br>
-    v6.14.53：リルート／復帰の状態機械を強化。GPS精度に応じた12〜20mの逸脱corridorと連続2fix・550ms基準で再検索を早め、リルート未発火を抑制。START時の元ルートを保持し、リルート後に元ルートへ物理的に復帰したことを3fix連続で確認すると元ルートを再採用して一時リルート線を破棄。<br>
-    v6.14.52：実走ログで確認した遠方セグメント誤マッチを修正。実車のmap matching／逸脱判定を現在のroute progress周辺のcorridorに限定。<br>
-    v6.14.51：START ORIGIN GUARDを再設計。ルート起点の現在地整合を最優先し、大型POIの走行可能終点ズレを許容。<br>
+    v6.15.0.1：v6.15.0統合時に欠落したSTART前のルート候補描画とroute preview camera fitを復旧。候補ルートをatomicに全描画してから旧線を破棄し、jarvisFitRoutePreview()で必ずルート全体を画面内へ収める。START後は選択中のactive route 1本のみをatomic描画。<br>
+    v6.15.0：Claude/Codex独立レビューを反映したナビ中枢統合版。v6.14.48〜53のruntime monkey patchを読み込まず、map matching・逸脱/リルート状態遷移・route ownership/atomic描画・route generation・元ルート復帰・Wake Lock・START guardをcanonical app.js内の単一coreへ統合。位置投影は進捗corridor内を原則とし、無制限full-scanを廃止。<br>
+    v6.14.53：リルート／復帰の状態機械を強化。<br>
     ※ 走行中の画面操作はせず、安全な場所に停車して操作してください。
   </div>
 </div>
@@ -21,9 +20,9 @@
 </div>
 <div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
 font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
-opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.15.0-INTEGRATED-20260905A</div>
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.15.0.1-INTEGRATED-20260905A</div>
 <script>
-window.__JARVIS_ROAD_TEST_BUILD_ID="v6.15.0-INTEGRATED-20260905A";
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.15.0.1-INTEGRATED-20260905A";
 try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
 </script>
 <script src="road-test-ui.js" defer></script>
