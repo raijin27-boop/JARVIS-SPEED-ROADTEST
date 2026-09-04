@@ -1,0 +1,200 @@
+  }
+  return bestS;
+}
+function jarvisTurnSpan(centerS,dir){
+  const sign=dir==='RIGHT'?1:-1;
+  const from=Math.max(0,centerS-40),to=Math.min(jarvisMotion.total,centerS+58),step=2;
+  const samples=[];
+  for(let s=from;s<=to+.01;s+=step)samples.push({s,heading:jarvisMotionHeadingAtS(s)});
+  if(samples.length<4)return{startS:Math.max(0,centerS-1),endS:Math.min(jarvisMotion.total,centerS+7),turnDeg:0};
+  let total=0;const inc=[];
+  for(let i=1;i<samples.length;i++){
+    const d=jarvisNorm180(samples[i].heading-samples[i-1].heading)*sign;
+    const v=d>0?Math.min(22,d):0;
+    inc.push(v);total+=v;
+  }
+  if(total<10)return{startS:Math.max(0,centerS-1),endS:Math.min(jarvisMotion.total,centerS+9),turnDeg:total};
+  const lo=total*.08,hi=total*.94;let acc=0,startS=centerS,endS=centerS,gotStart=false;
+  for(let i=0;i<inc.length;i++){
+    acc+=inc[i];
+    if(!gotStart&&acc>=lo){startS=samples[i].s;gotStart=true;}
+    if(acc>=hi){endS=samples[Math.min(i+1,samples.length-1)].s;break;}
+  }
+  startS=Math.min(startS,centerS);
+  endS=Math.max(endS,centerS+3);
+  return{startS,endS,turnDeg:total};
+}
+function jarvisTurnEvents(){
+  if(!jarvisMotionPreparePath())return[];
+  const steps=jarvisVoiceSteps(),out=[];
+  for(let i=0;i<steps.length;i++){
+    const st=steps[i],strength=jarvisTurnStrength(st),m=jarvisTurnManeuver(st);
+    if(strength==='NO')continue;
+
+    const e=jarvisVoiceManeuverPoint(st);if(!e)continue;
+    const p=jarvisMotionProject(e.latitude,e.longitude);if(!p)continue;
+
+    const before=jarvisMotionHeadingAtS(Math.max(0,p.s-13));
+    const after=jarvisMotionHeadingAtS(Math.min(jarvisMotion.total,p.s+15));
+    const geom=jarvisNorm180(after-before);
+
+    let dir=jarvisTurnDir(st);
+    const kind=jarvisGuidanceKind(strength);
+
+    // Exit/fork/keep are not ordinary turns. Trust Google's maneuver category and
+    // use geometry only to locate the visible branch, not to suppress the event.
+    if(kind==='EXIT'||kind==='DIVERGE'){
+      dir=jarvisManeuverDir(m) || jarvisInstructionDir(st) || (Math.abs(geom)>=5?(geom>0?'RIGHT':'LEFT'):null);
+      const fallbackDir=dir || (geom>=0?'RIGHT':'LEFT');
+      const turnS=jarvisRefineTurnS(p.s,fallbackDir);
+      let span=jarvisTurnSpan(turnS,fallbackDir);
+
+      // Very shallow exits can look almost straight. Keep a compact branch arrow anyway.
+      if(span.turnDeg<8){
+        span={
+          startS:Math.max(0,p.s-5),
+          endS:Math.min(jarvisMotion.total,p.s+22),
+          turnDeg:Math.abs(geom)
+        };
+      }
+      out.push({
+        stepIndex:i,s:p.s,startS:span.startS,endS:span.endS,
+        // v6.14.44 VOICE TRUTH: key identifies the maneuver only (route step index + kind), not
+        // a recomputed distance-along-route value. `s`/`turnS` are refined from the live route
+        // geometry using windows that depend on the vehicle's *current* speed
+        // (jarvisMotionHeadingAtS), so their rounded value can shift by a metre or two between
+        // consecutive calls as speed changes while approaching the same physical junction. A key
+        // built from that value could silently change mid-approach, defeating voiceAnnounced
+        // de-duplication and re-announcing the same stage twice ("voice duplicate").
+        turnDeg:span.turnDeg,dir,key:`${i}:${kind}`,
+        source:strength,maneuver:m,kind
+      });
+      continue;
+    }
+
+    if(kind==='MERGE'){
+      // v6.14.7: only Google's explicit MERGE owns merge guidance. Instruction-text rescue alone
+      // can describe traffic joining from the side even when *our* route stays on the mainline.
+      if(!/MERGE/.test(m))continue;
+      dir=jarvisManeuverDir(m) || jarvisInstructionDir(st) || (Math.abs(geom)>=7?(geom>0?'RIGHT':'LEFT'):null);
+      out.push({
+        stepIndex:i,s:p.s,startS:Math.max(0,p.s-18),endS:Math.min(jarvisMotion.total,p.s+38),
+        turnDeg:Math.abs(geom),dir,key:`${i}:${kind}`,
+        source:'MERGE_EXPLICIT',maneuver:m,kind
+      });
+      continue;
+    }
+
+    // Normal intersection logic: still conservative to suppress false LEFT/RIGHT.
+    if(!dir&&strength==='MISSING'){
+      if(Math.abs(geom)<32)continue;
+      dir=geom>0?'RIGHT':'LEFT';
+    }
+    if(!dir)continue;
+
+    const sameSign=(dir==='RIGHT'&&geom>0)||(dir==='LEFT'&&geom<0);
+    if(!sameSign)continue;
+
+    const turnS=jarvisRefineTurnS(p.s,dir);
+    const span=jarvisTurnSpan(turnS,dir);
+    const spanLen=Math.max(1,span.endS-span.startS);
+    const density=span.turnDeg/spanLen;
+
+    if(strength==='HARD'){
+      if(Math.abs(geom)<10||span.turnDeg<12)continue;
+      if(spanLen>82&&density<.20)continue;
+    }else if(strength==='SLIGHT'){
+      if(Math.abs(geom)<20||span.turnDeg<22)continue;
+      if(spanLen>72&&density<.34)continue;
+    }else{
+      if(Math.abs(geom)<32||span.turnDeg<32)continue;
+      if(spanLen>64&&density<.46)continue;
+    }
+
+    out.push({
+      stepIndex:i,s:turnS,startS:span.startS,endS:span.endS,
+      turnDeg:span.turnDeg,dir,key:`${i}:TURN`,
+      source:strength,maneuver:m,kind:'TURN'
+    });
+  }
+  return out.sort((a,b)=>a.s-b.s);
+}
+// v6.14.26 GUIDANCE CENTER: guidance distance is measured from the maneuver CENTER (e.s),
+// not the start of the visible white-arrow/turn-span geometry (e.startS). Using startS made
+// the announced/zoom distance reach 0m before the junction and go negative while still inside
+// the turn span. startS/endS are unchanged and continue to define the visible arrow window.
+function jarvisNextTurnInfo(){if(!navSessionStarted||jarvisDeviationEscape||!Number.isFinite(jarvisMotion.displayS))return null;for(const e of jarvisTurnEvents()){const d=e.s-jarvisMotion.displayS;if(jarvisMotion.displayS<=e.endS+5)return{...e,distance:d};}return null;}
+function jarvisCurrentGuidanceEvent(){
+  const live=jarvisNextTurnInfo();
+  const now=performance.now();
+  if(live){jarvisGuidanceCache=live;jarvisGuidanceCacheAt=now;return live;}
+  if(jarvisGuidanceCache&&now-jarvisGuidanceCacheAt<=1200&&Number.isFinite(jarvisMotion.displayS)&&jarvisMotion.displayS<=jarvisGuidanceCache.endS+3){
+    return {...jarvisGuidanceCache,distance:jarvisGuidanceCache.s-jarvisMotion.displayS};
+  }
+  jarvisGuidanceCache=null;
+  return null;
+}
+
+// v6.14.12 Google-like adaptive navigation camera.
+// Google Navigation SDK publicly describes dynamic zoom/tilt that accounts for highways,
+// urban areas, road density and upcoming maneuvers. Maps JS does not expose that native
+// camera policy, so JARVIS approximates it from signals we actually own: maneuver class,
+// vehicle speed, turn geometry and density of nearby ordinary turns.
+function jarvisNearbyTurnDensityMeters(aheadM=320){
+  if(!Number.isFinite(jarvisMotion.displayS))return 0;
+  const s0=jarvisMotion.displayS,s1=s0+aheadM;
+  let n=0;
+  for(const e of jarvisTurnEvents()){
+    if(e.s<s0-8)continue;
+    if(e.s>s1)break;
+    if(e.kind==='TURN')n++;
+  }
+  return n;
+}
+function jarvisAdaptiveNavZoom(turnInfo){
+  const baseZoom=18;
+  if(!turnInfo||!Number.isFinite(jarvisMotion.displayS))return baseZoom;
+
+  // Ramps, exits, forks/keep and merges are better understood with wider context.
+  // Do not do the old 70m forced zoom for these highway/grade-separated maneuvers.
+  if(turnInfo.kind==='EXIT'||turnInfo.kind==='DIVERGE'||turnInfo.kind==='MERGE')return baseZoom;
+  if(turnInfo.kind!=='TURN')return baseZoom;
+
+  const d=Number(turnInfo.distance);
+  if(!Number.isFinite(d)||d>95||jarvisMotion.displayS>turnInfo.endS+5)return baseZoom;
+
+  const speedKmh=Math.max(0,(Number(jarvisMotion.speedMps)||0)*3.6);
+  const spanLen=Math.max(1,(Number(turnInfo.endS)||0)-(Number(turnInfo.startS)||0));
+  const turnDeg=Math.max(0,Number(turnInfo.turnDeg)||0);
+  const turnDensity=turnDeg/spanLen;
+  const nearbyTurns=jarvisNearbyTurnDensityMeters(320);
+
+  // At arterial/highway-like speeds, keep the field of view wide. If the rider slows
+  // for a real intersection the zoom can progressively engage, which feels closer to
+  // Google's context-sensitive camera than a road-name heuristic.
+  if(speedKmh>=42)return baseZoom;
+
+  // Long, sweeping geometry is not an intersection worth magnifying.
+  if(spanLen>48&&turnDensity<0.72)return baseZoom;
+
+  // Dense/slow urban roads benefit most from a close view. Use fractional zoom levels
+  // and distance bands instead of snapping 18 -> 19 at exactly 70m.
+  const urbanLike=(speedKmh<=30)||(nearbyTurns>=2);
+  if(d<=38)return urbanLike?18.85:18.55;
+  if(d<=68)return urbanLike?18.62:18.34;
+  if(d<=95&&urbanLike)return 18.28;
+  return baseZoom;
+}
+let jarvisTurnArrowLine=null;
+function jarvisClearTurnArrow(){try{jarvisTurnArrowLine?.setMap?.(null)}catch(e){}jarvisTurnArrowLine=null;}
+function jarvisTurnArrowWindow(turn){
+  if(!turn)return null;
+  const kind=turn.kind||'TURN',deg=Math.abs(Number(turn.turnDeg)||0);
+  // The white line is an explanation of the maneuver, not a fixed-distance overlay.
+  // Keep/merge-like actions need no painted path; exits/forks need enough branch geometry
+  // to make the split obvious; normal intersections stay compact.
+  if(kind==='MERGE'||/KEEP/.test(String(turn.maneuver||'')))return null;
+  if(kind==='EXIT'||kind==='DIVERGE'){
+    const before=deg<18?12:16,after=deg<18?32:24;
+    return{startS:Math.max(0,turn.startS-before),endS:Math.min(jarvisMotion.total,turn.endS+after),maxDistance:145,branch:true};
+  }
