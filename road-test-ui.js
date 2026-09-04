@@ -49,6 +49,18 @@ function syncFullscreen(){
   const nav=$('navPanel');
   document.body.classList.toggle('rt-nav-fullscreen',!!nav&&!nav.classList.contains('hidden'));
 }
+function routeLineGuard(){
+  try{
+    if(typeof navSessionStarted==='undefined'||!navSessionStarted||navMode!=='ROUTE'||!navGoogleMap)return;
+    const r=(routeCandidates?.[selectedRouteIndex]||routeData);
+    if(!r?.path?.length||r.path.length<2)return;
+    let ok=false;
+    try{ok=!!navRouteLine&&navRouteLine.getMap?.()===navGoogleMap&&navRouteLine.getPath?.().getLength?.()>=2;}catch(e){}
+    if(ok)return;
+    jarvisRenderRoute();
+    setStatus('ルート線の消失を検知し、自動復旧しました。','warn');
+  }catch(e){}
+}
 function render(){
   if(!$('rtChip'))return;
   const state=(typeof jarvisNavTrackingState!=='undefined')?jarvisNavTrackingState:'-';
@@ -75,7 +87,7 @@ body.rt-nav-fullscreen{padding:0!important;margin:0!important;overflow:hidden!im
   $('rtToggle').onclick=()=>{if(jarvisRoadTestEnabled){jarvisRoadTestStop();setStatus('記録を停止しました。','warn');}else{jarvisRoadTestStart();setStatus('記録を再開しました。','ok');}render();};
   $('rtSave').onclick=saveJson;$('rtShare').onclick=shareJson;
   $('rtClear').onclick=()=>{jarvisRoadTestClearSession();if($('rtExportBox')){$('rtExportBox').hidden=true;$('rtExportBox').value='';}setStatus('新しいロードテストセッションを開始しました。','ok');render();};
-  jarvisRoadTestStart();setStatus('記録中です。走行中は操作せず、安全な場所で保存してください。','ok');render();setInterval(render,1000);
+  jarvisRoadTestStart();setStatus('記録中です。走行中は操作せず、安全な場所で保存してください。','ok');render();setInterval(render,1000);setInterval(routeLineGuard,300);
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
 })();
