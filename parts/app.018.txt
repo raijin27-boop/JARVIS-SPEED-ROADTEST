@@ -1,0 +1,200 @@
+    requestWakeLock();
+    // 非表示状態で初期化されたGoogle MapはiPhone Safariで中心がずれることがあるため、
+    // NAV表示後にresize→現在地再取得→再センタリングする。
+    setTimeout(()=>{jarvisResizeMaps();jarvisUpdateRecenterButton();if(!jarvisRoutePreviewOwnsViewport())jarvisAcquireAndRecenter(false)},120);
+    setTimeout(()=>{jarvisResizeMaps();if(navMapFollow&&!jarvisRoutePreviewOwnsViewport())jarvisCenterOnCurrentPosition(false)},420);
+  }else{
+    jarvisStopLocationTrackingIfIdle();
+    jarvisSyncWakeLock();
+  }
+}
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){
+    enterResumeGuard();
+    if(jarvisLocationTrackingWanted()){
+      if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null}
+      jarvisEnsureLocationTracking(false);
+    }
+    jarvisSyncWakeLock();
+  }
+});
+window.addEventListener('pageshow',()=>{
+  if(jarvisLocationTrackingWanted()){
+    enterResumeGuard();
+    jarvisEnsureLocationTracking(false);
+    jarvisSyncWakeLock();
+  }
+});
+
+function bind(id,event,handler){
+  const el=$(id);
+  if(el) el.addEventListener(event,handler);
+}
+bind('startBtn','click',jarvisStartNavigation);
+bind('mapStartBtn','click',jarvisStartNavigation);
+bind('stopBtn','click',stopGPS);
+bind('resetBtn','click',resetTrip);
+bind('calcBtn','click',calcError);
+bind('diagBtn','click',refreshDiagnostics);
+bind('clearDestBtn','click',clearDestination);
+bind('speedTab','click',()=>showTab('speed'));
+bind('navTab','click',()=>showTab('nav'));
+bind('speedToNavBtn','click',()=>showTab('nav'));
+bind('recenterBtn','click',jarvisRecenterNav);
+bind('headingModeBtn','click',jarvisToggleHeadingMode);
+bind('adventureModeBtn','click',()=>jarvisSetNavMode('ADVENTURE'));
+bind('routeModeBtn','click',()=>jarvisSetNavMode('ROUTE'));
+jarvisUpdateNavModeButtons();
+bind('themeModeBtn','click',jarvisToggleThemeMode);
+bind('mapViewBtn','click',jarvisToggleMapView);
+bind('landMapViewBtn','click',jarvisToggleMapView);
+bind('voiceGuideBtn','click',jarvisToggleVolumePopup);
+bind('mapVoiceVolume','input',e=>jarvisSetMapVoiceVolume(e.target.value));
+bind('mapVoiceVolume','change',e=>jarvisSetMapVoiceVolume(e.target.value));
+$('voiceVolumePopup')?.addEventListener('click',e=>e.stopPropagation());
+document.addEventListener('click',jarvisCloseVolumePopup);
+jarvisBindVoiceSettings();
+bind('landThemeModeBtn','click',jarvisToggleThemeMode);
+bind('landHeadingModeBtn','click',jarvisToggleHeadingMode);
+jarvisUpdateVoiceButton();
+
+try{
+  const savedVia=JSON.parse(localStorage.getItem('jarvisRouteViaPoints')||'[]');
+  if(Array.isArray(savedVia))routeViaPoints=savedVia.filter(p=>Number.isFinite(Number(p?.lat))&&Number.isFinite(Number(p?.lng))).map(p=>({lat:Number(p.lat),lng:Number(p.lng),visited:!!p.visited})).slice(0,3);
+}catch(e){routeViaPoints=[]}
+restoreDestination();
+setTimeout(()=>jarvisRenderViaMarkers(),500);
+refreshDiagnostics();
+updateNav();
+document.documentElement.dataset.jarvisReady='v6.14.16';
+
+
+
+// ===== v6.13.10: iOS Safari input-focus cleanup =====
+function jarvisBlurTextInputs(){
+  try{
+    const ae=document.activeElement;
+    if(ae && typeof ae.blur==='function') ae.blur();
+    document.querySelectorAll('input,textarea,[contenteditable="true"]').forEach(el=>{
+      try{ if(el===document.activeElement || el.matches(':focus')) el.blur(); }catch(_){}
+    });
+    // Give iOS Safari a second chance after click/keyboard state settles.
+    setTimeout(()=>{
+      try{
+        const ae2=document.activeElement;
+        if(ae2 && typeof ae2.blur==='function') ae2.blur();
+      }catch(_){}
+    },80);
+  }catch(_){}
+}
+
+// ===== v2.0 Google Places search =====
+let jarvisGoogleReady = false;
+let jarvisAutocomplete = null;
+let jarvisSessionToken = null;
+let jarvisDebounce = null;
+const JARVIS_KEY_STORAGE = 'jarvisGoogleMapsApiKey';
+
+function jarvisSetStatus(text, kind=''){
+  const el = document.getElementById('googleStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'search-status' + (kind ? ' ' + kind : '');
+}
+
+// v6.14.47 HOSTING DIAGNOSTICS: a v6.14.46 ROAD TEST Claude Artifact publish showed only one
+// generic message ("APIキー・サイト制限・Maps JavaScript APIを確認してください") for every
+// possible failure — including the Artifact CSP itself blocking the maps.googleapis.com request
+// outright, which is not fixable by re-entering a correct API key at all. jarvisHostDiag tells
+// these apart so the rider (or whoever reads an exported session) is not sent chasing a key
+// problem that was actually a hosting/CSP problem. Never records the API key itself — only
+// location.origin (which host is actually running, useful for CSP/referrer troubleshooting) and
+// fixed, key-free explanation text. See road-test/README.md and test/hosting-diagnostics-tests.mjs.
+let jarvisHostDiag={
+  mapsState:'UNKNOWN', // UNKNOWN -> LOADING -> MAPS_READY | MAPS_SCRIPT_BLOCKED_BY_CSP_OR_HOST | MAPS_AUTH_OR_KEY_ERROR
+  mapsDetail:null,
+  mapsOrigin:typeof location!=='undefined'?location.origin:null,
+  geoState:'UNKNOWN' // UNKNOWN -> OK | GEOLOCATION_UNAVAILABLE | GEOLOCATION_PERMISSION_DENIED
+};
+function jarvisSetHostDiag(mapsState,mapsDetail){
+  jarvisHostDiag.mapsState=mapsState;
+  jarvisHostDiag.mapsDetail=mapsDetail||null;
+  if(typeof jarvisRoadTestEnabled!=='undefined'&&jarvisRoadTestEnabled)jarvisRoadTestNoteLifecycle('MAPS_STATE_'+mapsState,{origin:jarvisHostDiag.mapsOrigin});
+}
+function jarvisSetGeoDiag(geoState){
+  jarvisHostDiag.geoState=geoState;
+  if(typeof jarvisRoadTestEnabled!=='undefined'&&jarvisRoadTestEnabled)jarvisRoadTestNoteLifecycle('GEO_STATE_'+geoState,{});
+}
+
+function jarvisLoadGoogle(key){
+  if (!key) return;
+  if (window.google && google.maps && google.maps.places) {
+    jarvisInitPlaces();
+    return;
+  }
+  if (document.getElementById('jarvisGoogleMapsScript')) return;
+  jarvisSetHostDiag('LOADING',null);
+  const s = document.createElement('script');
+  s.id = 'jarvisGoogleMapsScript';
+  s.async = true;
+  s.defer = true;
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&libraries=places&v=beta&callback=jarvisGoogleCallback';
+  // A network-level failure to even fetch the script — the CSP-blocked case a Claude Artifact
+  // hits (maps.googleapis.com is not on the Artifact CSP's allowlist), but also a genuine DNS/
+  // network failure on any host. Distinct from gm_authFailure below, which only fires once the
+  // script DID load and execute but Google itself rejected the key/referrer.
+  s.onerror = () => {
+    jarvisSetHostDiag('MAPS_SCRIPT_BLOCKED_BY_CSP_OR_HOST',`スクリプト取得に失敗しました（オリジン: ${jarvisHostDiag.mapsOrigin}）。多くの場合ホスト側のCSP/ネットワーク制限が原因で、APIキーの正誤とは無関係です。`);
+    jarvisSetStatus(`Google Mapsスクリプトを読み込めません（${jarvisHostDiag.mapsOrigin} のCSP/ネットワーク制限の可能性）。APIキーの問題ではない場合があります。`,'bad');
+  };
+  document.head.appendChild(s);
+  jarvisSetStatus('Google Mapsに接続中…');
+}
+
+// Google's own documented global for Maps JS API authorization failures (invalid key, referrer/
+// API restriction, billing not enabled) — called by the SDK itself after the script has already
+// loaded and executed successfully, which is exactly what distinguishes this from s.onerror
+// above (a network/CSP failure that never got this far at all).
+window.gm_authFailure = function(){
+  jarvisSetHostDiag('MAPS_AUTH_OR_KEY_ERROR',`Google Mapsが認証エラーを返しました（オリジン: ${jarvisHostDiag.mapsOrigin}）。APIキーの制限（HTTPリファラー/APIの有効化/請求設定）を確認してください。`);
+  jarvisSetStatus('Google Maps認証エラー：APIキーのサイト制限・有効化・請求設定を確認してください。','bad');
+};
+
+window.jarvisGoogleCallback = function(){
+  jarvisInitPlaces();
+};
+
+function jarvisInitPlaces(){
+  try{
+    jarvisGoogleReady = true;
+    jarvisSessionToken = new google.maps.places.AutocompleteSessionToken();
+    document.getElementById('keySetup')?.classList.add('hidden');
+    jarvisSetStatus('Google検索 準備OK','ok');
+    jarvisSetHostDiag('MAPS_READY',null);
+    jarvisInitMaps();
+  }catch(e){
+    jarvisSetStatus('Placesライブラリ初期化エラー：' + e.message,'bad');
+  }
+}
+
+
+
+function jarvisClearNearbyMarkers(){
+  for(const m of [...navNearbyMarkers,...landNearbyMarkers]){try{m.setMap(null)}catch(e){}}
+  navNearbyMarkers=[];landNearbyMarkers=[];
+  try{navNearbyInfo?.close()}catch(e){} try{landNearbyInfo?.close()}catch(e){}
+  navNearbyInfo=landNearbyInfo=null;
+}
+function jarvisNearbyIcon(label){
+  const glyph=label==='コンビニ'?'C':label==='ガソリンスタンド'?'G':label==='トイレ'?'WC':label==='駐車場'?'P':label==='スーパー'?'S':label==='カフェ'?'☕':'●';
+  return {path:google.maps.SymbolPath.CIRCLE,scale:15,fillColor:'#ffffff',fillOpacity:.96,strokeColor:'#111827',strokeWeight:2,labelOrigin:new google.maps.Point(0,0),_glyph:glyph};
+}
+async function jarvisOpenNearbyInfo(which,index){
+  const item=nearbyPlaces[index]; if(!item)return;
+  const map=which==='nav'?navGoogleMap:landGoogleMap;
+  const markers=which==='nav'?navNearbyMarkers:landNearbyMarkers;
+  const marker=markers[index]; if(!map||!marker)return;
+  let info=which==='nav'?navNearbyInfo:landNearbyInfo;
+  if(!info){info=new google.maps.InfoWindow(); if(which==='nav')navNearbyInfo=info;else landNearbyInfo=info;}
+  const dist=item.distance<1000?Math.round(item.distance)+' m':(item.distance/1000).toFixed(1)+' km';
