@@ -1,0 +1,39 @@
+    </div>
+    <div class="result">
+      <div class="resultbox"><div class="k">GPSとの差</div><div id="diff" class="v">--</div></div>
+      <div class="resultbox"><div class="k">メーター誤差率</div><div id="errorRate" class="v">--</div></div>
+    </div>
+  </section>
+
+  <div class="note">
+    🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
+    v6.14.44（本ビルド）：v6.14.18を基準に、v6.14.19 display-engine分離パッチ、v6.14.24 TURN GUARD、v6.14.26 GUIDANCE CENTER、v6.14.27 LOCAL CORRIDOR、v6.14.28 REROUTE CORRIDORをapp-v6.14.18.jsへ実コードとして統合。加えてARRIVAL SNAP（到着判定の2経路化）、音声案内の重複修正（maneuverキーの安定化）、START ORIGIN GUARD（ルート整合性チェック）、routeIntegrity/motionDiag診断を新規実装。詳細はDEVELOPMENT_STATE_v6.14.44.mdおよびv6.14.44-source/README.mdを参照。<br>
+    v6.14.18：v6.14.14を基準に、Google Navigation SDKのRoad-Snapped Location Providerの思想を参考に自車位置表示を独立安定化。FREE TRACK / OFF_ROUTEではraw GPS fixを直接描画せず、速度・fix間隔・精度から物理的に妥当な移動量へ制限し、進行方向に対する横方向ノイズを強く抑制。実際の右左折ではcourse変化を検知してフィルタを緩める。リルート後の再吸着は4fix連続一致へ厳格化し、再合流時も現在表示位置に近いroute progressから滑らかに復帰。v6.14.14の逸脱カメラ、白線、ルートgeometry、アダプティブズームは維持。<br>
+    v6.14.14：v6.14.13を基準に、ルート逸脱時のカメラ所作を再設計。逸脱検知後は約1.8秒かけて緩やかにズームアウトし、位置・縦方向の追従・地図回転を別々に低速化。大きな位置差でもカメラ移動量を制限し、自車が一時的に画面外へ出ても瞬間ワープで戻さない。通常案内では予定ルートの曲がりを先読みして地図を回さず、実車の進行方向が変わった後にヘディングアップを追従。GPS間のルート先読みも実進行方向と28°以上ずれる場合は交差点手前で抑制。白線・ルートgeometry・アダプティブズームは維持。<br>
+    v6.14.0：Google Routes設計に合わせ、リルートを現在地＋進行方向基準へ刷新。仮想160m経由点/Uターン依存を廃止し、代替ルートを進行方向適合度＋所要時間で選択。目的地は到着・再検索失敗で勝手に消さず、到着判定もルート終端と組み合わせて誤判定を防止。<br>
+    「近くのコンビニ／ガソリンスタンド／トイレ／駐車場／スーパー」等は現在地5km以内をNearby Searchで近い順に表示。AUTO/DARK/LIGHTも維持。<br>
+    ※ 走行中の画面操作はせず、安全な場所に停車して操作してください。
+  </div>
+</div>
+<script src="app.js" defer></script>
+
+
+
+
+<div id="jarvisGuidanceDiag" style="margin:10px 32px 4px;color:#8793a6;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;word-break:break-word">
+案内診断: 待機中
+</div>
+<div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
+font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.47-ROADTEST-20260903T233900Z</div>
+<script>
+// Forces ROAD TEST mode on for this deployment specifically, and stamps a fresh, unique
+// BUILD-ID app-v6.14.44.js reads back via window.__JARVIS_ROAD_TEST_BUILD_ID (see that file's
+// "v6.14.46 ROAD TEST telemetry" section) — shown in the on-screen build tag above and in every
+// JSON export, so two deployments of this site are never confused with each other.
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.47-ROADTEST-20260903T233900Z";
+try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
+</script>
+<script src="road-test-ui.js" defer></script>
+</body>
+</html>
