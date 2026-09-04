@@ -1,0 +1,200 @@
+let jarvisGuidanceCache=null;
+let jarvisGuidanceCacheAt=0;
+let jarvisGuidancePrevDistance=new Map();
+let voiceArrivalSpoken=false;
+let voiceLastSpokenAt=0;
+// v6.14.44 VOICE TRUTH: a monotonically increasing id stamped on every navigation session start
+// (jarvisStartNavigation). A speechSynthesis cooldown timer from a PREVIOUS session/scenario must
+// never suppress the first announcement of a NEW one ("stale-start" guard) — the simulator runs
+// six scenarios back-to-back in a single page session, so this matters in a way it never did on a
+// single real drive. voiceLastSpokenAt is reset alongside it in jarvisResetVoiceProgress().
+let jarvisVoiceSessionId=0;
+let jarvisLastGuidanceKeyBase=null;
+// Ground-truth log of every jarvisSpeak() attempt (accepted or not), independent of whatever the
+// UI/voiceAnnounced bookkeeping believes happened. The simulator computes voiceCount/voiceLateCount/
+// voiceDuplicateCount/voiceOrderErrors from this, filtered to the current session, instead of trusting
+// state that a bug in the announcement logic could itself have corrupted.
+window.__jarvisVoiceEvents=window.__jarvisVoiceEvents||[];
+let jarvisMapsReady=false;
+let navMapFollow=true;
+let navMapUserMoved=false;
+let headingUpMode=localStorage.getItem('jarvisHeadingUpMode')==='1';
+let mapThemeMode=localStorage.getItem('jarvisMapThemeMode')||'AUTO';
+let mapViewMode=localStorage.getItem('jarvisMapViewMode')||'ROADMAP';
+if(!['ROADMAP','SATELLITE','HYBRID','3D'].includes(mapViewMode))mapViewMode='ROADMAP';
+let navTrafficLayer=null, landTrafficLayer=null;
+// v6.4 Google 3D Maps (portrait NAV trial)
+let navMap3D=null, maps3dLibrary=null, nav3DRouteLine=null, nav3DCurrentMarker=null, nav3DDestMarker=null;
+let nav3DInitPromise=null;
+let autoIsDay=null;
+let jarvisMapsLibrary=null;
+let jarvisRenderingType=null;
+let jarvisDiagLastTarget=null;
+const JARVIS_MAP_DEFAULT={lat:34.6937,lng:135.5023};
+const JARVIS_DARK_MAP_STYLE=[
+  {elementType:'geometry',stylers:[{color:'#17212b'}]},
+  {elementType:'labels.text.stroke',stylers:[{color:'#17212b'}]},
+  {elementType:'labels.text.fill',stylers:[{color:'#aeb8c4'}]},
+  {featureType:'road',elementType:'geometry',stylers:[{color:'#2b3948'}]},
+  {featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#1b2632'}]},
+  {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#3a4a5c'}]},
+  {featureType:'water',elementType:'geometry',stylers:[{color:'#0b1924'}]},
+  {featureType:'poi',elementType:'labels.text.fill',stylers:[{color:'#8d9baa'}]},
+  {featureType:'transit',elementType:'labels.text.fill',stylers:[{color:'#8d9baa'}]}
+];
+function jarvisSquidSvg(){return `<div class="squid-arrow"><div class="earth-orb blue-orb" aria-hidden="true"><span class="earth-orb-shine"></span></div></div>`;}
+function jarvisCreateSquidOverlay(map){
+  const overlay=new google.maps.OverlayView();
+  overlay.position=null;overlay.heading=0;overlay.div=null;
+  overlay.onAdd=function(){
+    const div=document.createElement('div');
+    div.className='map-squid-marker';
+    div.innerHTML=jarvisSquidSvg();
+    this.div=div;
+    this.getPanes().overlayMouseTarget.appendChild(div);
+  };
+  overlay.draw=function(){
+    if(!this.div||!this.position)return;
+    const pt=this.getProjection().fromLatLngToDivPixel(this.position);
+    if(!pt)return;
+    this.div.style.left=pt.x+'px';
+    this.div.style.top=pt.y+'px';
+    this.div.style.setProperty('--squid-heading',(this.heading||0)+'deg');
+  };
+  overlay.onRemove=function(){this.div?.remove();this.div=null;};
+  overlay.setPosition=function(lat,lng,heading=0){
+    if(!Number.isFinite(Number(lat))||!Number.isFinite(Number(lng)))return;
+    this.position=new google.maps.LatLng(Number(lat),Number(lng));
+    this.heading=Number(heading)||0;
+    this.draw();
+  };
+  overlay.setMap(map);
+  return overlay;
+}
+function jarvisEffectiveTheme(){
+  if(mapThemeMode==='LIGHT'||mapThemeMode==='DARK') return mapThemeMode;
+  if(autoIsDay!==null) return autoIsDay?'LIGHT':'DARK';
+  const h=new Date().getHours(); return (h>=6&&h<18)?'LIGHT':'DARK';
+}
+function jarvisMapOptions(){
+  const scheme=jarvisEffectiveTheme();
+  return {center:JARVIS_MAP_DEFAULT,zoom:15,disableDefaultUI:true,gestureHandling:'greedy',keyboardShortcuts:false,clickableIcons:false,backgroundColor:scheme==='DARK'?'#0b111a':'#e8edf2',colorScheme:scheme,zoomControl:false,renderingType:jarvisRenderingType,headingInteractionEnabled:true,tiltInteractionEnabled:false,tilt:0,heading:0};
+}
+function jarvisRenderingLabel(map){
+  const rt=map?.getRenderingType?.();
+  if(!rt) return '判定中';
+  const vector=jarvisMapsLibrary?.RenderingType?.VECTOR;
+  return rt===vector?'VECTOR':'RASTER';
+}
+function jarvisHeadingDiag(map,target){
+  if(!map)return;
+  const actual=Number(map.getHeading?.()??0);
+  const src=(typeof currentHeading==='number'&&isFinite(currentHeading))?headingSource:'--';
+  const mode=jarvisRenderingLabel(map);
+  const t=target===null||target===undefined?'--':Math.round(target)+'°';
+  const a=Number.isFinite(actual)?Math.round(actual)+'°':'--';
+  setTextIf('navMapDiag',`${mode} / ${src} / 指令 ${t} / 地図 ${a}`);
+  if(mode==='RASTER'&&headingUpMode) setTextIf('navMapState','回転非対応（RASTER）');
+}
+
+function jarvisUpdateThemeButton(){
+  const label=mapThemeMode==='AUTO'?'AUTO':mapThemeMode==='DARK'?'DARK':'LIGHT';
+  setTextIf('themeModeBtn',label); setTextIf('landThemeModeBtn',label);
+}
+function jarvisRebuildMaps(){
+  const navCenter=navGoogleMap?.getCenter?.(); const navZoom=navGoogleMap?.getZoom?.();
+  navSquidOverlay?.setMap(null); landSquidOverlay?.setMap(null);
+  navDestMarker?.setMap(null); landDestMarker?.setMap(null); navGuideLine?.setMap(null); landGuideLine?.setMap(null);
+  navGoogleMap=landGoogleMap=null; navSquidOverlay=landSquidOverlay=null; navDestMarker=landDestMarker=null; navGuideLine=landGuideLine=null; jarvisMapsReady=false;
+  jarvisInitMaps();
+  if(navGoogleMap&&navCenter){navGoogleMap.setCenter(navCenter); if(navZoom)navGoogleMap.setZoom(navZoom)}
+}
+function jarvisToggleThemeMode(){
+  mapThemeMode=mapThemeMode==='AUTO'?'DARK':mapThemeMode==='DARK'?'LIGHT':'AUTO';
+  localStorage.setItem('jarvisMapThemeMode',mapThemeMode); jarvisUpdateThemeButton(); jarvisRebuildMaps();
+}
+
+function jarvisMapViewId(){
+  return mapViewMode==='SATELLITE'?'satellite':mapViewMode==='HYBRID'?'hybrid':'roadmap';
+}
+function jarvisUpdateMapViewButton(){
+  const label=mapViewMode==='SATELLITE'?'航空':mapViewMode==='HYBRID'?'複合':mapViewMode==='3D'?'3D':'地図';
+  setTextIf('mapViewBtn',label); setTextIf('landMapViewBtn',label);
+  $('mapViewBtn')?.classList.toggle('active',mapViewMode==='3D');
+}
+async function jarvisInit3DMap(){
+  if(navMap3D)return navMap3D;
+  if(nav3DInitPromise)return nav3DInitPromise;
+  nav3DInitPromise=(async()=>{
+    try{
+      maps3dLibrary=maps3dLibrary||await google.maps.importLibrary('maps3d');
+      const {Map3DElement}=maps3dLibrary;
+      const host=$('navMap3D'); if(!host)throw new Error('3D表示領域なし');
+      const center=(typeof currentLat==='number'&&typeof currentLon==='number')?{lat:currentLat,lng:currentLon,altitude:0}:destination?{lat:destination.lat,lng:destination.lon,altitude:0}:{...JARVIS_MAP_DEFAULT,altitude:0};
+      navMap3D=new Map3DElement({center,range:navSessionStarted?1800:4500,tilt:navSessionStarted?55:48,heading:jarvisTravelHeading()||0,mode:'HYBRID',defaultUIHidden:false});
+      navMap3D.addEventListener('gmp-error',(ev)=>{
+        const detail=ev?.error?.message||ev?.detail?.message||ev?.message||'WebGL / 3D初期化失敗';
+        setTextIf('navMapState','3D ERROR');
+        setTextIf('navMapDiag','3D初期化失敗: '+detail);
+      });
+      navMap3D.addEventListener('gmp-steadychange',(ev)=>{
+        if(ev?.isSteady===false)return;
+        setTextIf('navMapState','VECTOR 3D');
+        setTextIf('navMapDiag','3D描画OK / tilt '+Math.round(Number(navMap3D.tilt||0))+'° / range '+Math.round(Number(navMap3D.range||0))+'m');
+      });
+      host.replaceChildren(navMap3D);
+      setTextIf('navMapState','VECTOR 3D');
+      setTextIf('navMapDiag','Maps 3D(beta) 読み込み中…');
+      setTimeout(()=>jarvisRender3DOverlays(),1200);
+      return navMap3D;
+    }catch(e){
+      navMap3D=null; nav3DInitPromise=null;
+      setTextIf('navMapState','3Dマップ初期化エラー');
+      setTextIf('navMapDiag','3D ERROR '+(e?.message||e));
+      throw e;
+    }
+  })();
+  return nav3DInitPromise;
+}
+async function jarvisRender3DOverlays(){
+  if(!navMap3D||!maps3dLibrary)return;
+  try{
+    if(nav3DRouteLine){nav3DRouteLine.remove();nav3DRouteLine=null}
+    if(nav3DCurrentMarker){nav3DCurrentMarker.remove();nav3DCurrentMarker=null}
+    if(nav3DDestMarker){nav3DDestMarker.remove();nav3DDestMarker=null}
+    const {Polyline3DElement,Marker3DElement}=maps3dLibrary;
+    if(routeData?.path?.length&&navMode==='ROUTE'){
+      nav3DRouteLine=new Polyline3DElement({path:routeData.path.map(p=>({lat:Number(typeof p.lat==='function'?p.lat():p.lat),lng:Number(typeof p.lng==='function'?p.lng():p.lng),altitude:2})),altitudeMode:'RELATIVE_TO_GROUND',strokeColor:'#0b63ce',strokeWidth:9,outerColor:'#ffffff',outerWidth:2,drawsOccludedSegments:true,zIndex:20});
+      navMap3D.append(nav3DRouteLine);
+    }
+    if(typeof currentLat==='number'&&typeof currentLon==='number'){
+      nav3DCurrentMarker=new Marker3DElement({position:{lat:currentLat,lng:currentLon,altitude:5},label:'🦑',altitudeMode:'RELATIVE_TO_GROUND',drawsWhenOccluded:true,sizePreserved:true,zIndex:30});
+      navMap3D.append(nav3DCurrentMarker);
+    }
+    if(destination){
+      nav3DDestMarker=new Marker3DElement({position:{lat:destination.lat,lng:destination.lon,altitude:5},label:'目的地',altitudeMode:'RELATIVE_TO_GROUND',drawsWhenOccluded:true,sizePreserved:true,zIndex:25});
+      navMap3D.append(nav3DDestMarker);
+    }
+  }catch(e){console.warn('3D overlay',e)}
+}
+async function jarvisSync3D(force=false){
+  if(mapViewMode!=='3D')return;
+  try{
+    const map3d=await jarvisInit3DMap();
+    if(typeof currentLat==='number'&&typeof currentLon==='number'&&(navMapFollow||force)){
+      map3d.center={lat:currentLat,lng:currentLon,altitude:0};
+      map3d.range=navSessionStarted?1800:4200;
+      map3d.tilt=navSessionStarted?55:48;
+      map3d.heading=headingUpMode?(jarvisTravelHeading()||0):0;
+    }else if(destination&&force){
+      map3d.center={lat:destination.lat,lng:destination.lon,altitude:0};
+    }
+    await jarvisRender3DOverlays();
+    if($('navMapState')?.textContent!=='3D READY') setTextIf('navMapState','VECTOR 3D');
+    if(!$('navMapDiag')?.textContent?.startsWith('3D描画OK')) setTextIf('navMapDiag','Maps 3D(beta) / '+(navSessionStarted?'安全追従':'俯瞰表示')+' / '+(headingUpMode?'進行↑':'北↑'));
+  }catch(e){}
+}
+async function jarvisApplyMapView(){
+  const shell=$('navMap')?.parentElement;
+  // v6.8: 旧フォトリアル3D(Map3DElement)は完全に表示経路から外す
+  shell?.classList.remove('is-3d');
