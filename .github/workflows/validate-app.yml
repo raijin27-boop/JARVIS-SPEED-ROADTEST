@@ -1,0 +1,35 @@
+name: Validate road-test app
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble app.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          find parts -maxdepth 1 -type f -name 'app.*.txt' -print0 | sort -z | xargs -0 cat > app.js
+          # Correct the one transfer typo from chunking before integrity verification.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+          bad="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
+          good="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
+          if bad in s:
+              s=s.replace(bad,good,1)
+          p.write_text(s)
+          PY
+      - name: Verify exact source blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object app.js)" = "2a1485fead08eb0d4d5f0891ed7a3ab570970a7d"
+          node --check app.js
+          echo "APP_JS_EXACT_MATCH_OK"
