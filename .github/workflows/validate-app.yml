@@ -10,35 +10,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assemble app.js
+      - name: Assemble exact app.js candidate
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(find parts -maxdepth 1 -type f -name 'app.*.txt' -print0 | sort -z)
-          : > app.js
-          for ((i=0; i<${#files[@]}; i++)); do
-            cat "${files[$i]}" >> app.js
-            if (( i < ${#files[@]} - 1 )); then printf '\n' >> app.js; fi
-          done
-          # Correct the one transfer typo from chunking before integrity verification.
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('app.js')
-          s=p.read_text()
-          bad="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
-          good="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
-          if bad in s:
-              s=s.replace(bad,good,1)
-          p.write_text(s)
+          import subprocess
+
+          expected='2a1485fead08eb0d4d5f0891ed7a3ab570970a7d'
+          files=sorted(Path('parts').glob('app.*.txt'))
+          chunks=[p.read_text() for p in files]
+          typo="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:endPt.lng});"
+          fixed="if(destination)result.endDistance=haversine({latitude:endPt.lat,longitude:endPt.lng},{latitude:destination.lat,longitude:destination.lon});"
+
+          variants={
+            'direct': ''.join(chunks),
+            'newline': '\n'.join(chunks),
+            'direct_final_nl': ''.join(chunks)+'\n',
+            'newline_final_nl': '\n'.join(chunks)+'\n',
+          }
+          chosen=None
+          for name,s in variants.items():
+              s=s.replace(typo,fixed,1)
+              Path(f'/tmp/{name}.js').write_text(s)
+              h=subprocess.check_output(['git','hash-object',f'/tmp/{name}.js'],text=True).strip()
+              print(f'{name}: {h} lines={s.count(chr(10))+1}')
+              if h==expected:
+                  chosen=(name,s)
+          if not chosen:
+              raise SystemExit('NO_EXACT_ASSEMBLY_MATCH')
+          name,s=chosen
+          Path('app.js').write_text(s)
+          print('EXACT_MATCH_VARIANT='+name)
           PY
-      - name: Verify exact source blob
+      - name: Verify exact source blob and syntax
         shell: bash
         run: |
           set -euo pipefail
           actual="$(git hash-object app.js)"
-          echo "assembled_sha=$actual"
-          echo "expected_sha=2a1485fead08eb0d4d5f0891ed7a3ab570970a7d"
-          wc -l app.js
-          node --check app.js
           test "$actual" = "2a1485fead08eb0d4d5f0891ed7a3ab570970a7d"
-          echo "APP_JS_EXACT_MATCH_OK"
+          node --check app.js
+          echo "APP_JS_EXACT_MATCH_OK $actual"
