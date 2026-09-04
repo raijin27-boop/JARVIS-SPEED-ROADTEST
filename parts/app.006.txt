@@ -1,0 +1,200 @@
+
+function jarvisMotionProject(lat,lon){
+  if(!jarvisMotionPreparePath())return null;
+  const pts=jarvisMotion.pts,cum=jarvisMotion.cum;
+  const R=6371000,rad=Math.PI/180,lat0=lat*rad,cos=Math.max(.15,Math.cos(lat0));
+  const targetS=jarvisMotion.targetS,hasTarget=Number.isFinite(targetS);
+  const travel=jarvisTravelHeading();
+
+  // v6.14.27 LOCAL CORRIDOR (two-stage map matching):
+  // Stage 1 only considers segments physically within 6m of the GPS fix and inside a
+  // forward-biased progress window relative to the current route position, and deliberately
+  // IGNORES heading. This is what a legitimate intersection/turn needs: right at the junction
+  // the physical fix sits almost exactly on the correct segment, but travel heading still lags
+  // the new road tangent, so a heading-penalised single-pass scorer can lose that segment to an
+  // older/parallel one 10-15m away. Stage 2 (the original distance+continuity+heading scorer)
+  // is used only when no stage-1 candidate exists (e.g. still far from any road, or genuinely
+  // off-route), and is what still protects divided/parallel-road carriageway selection.
+  let localBest=null,localBestScore=Infinity;
+  let fallbackBest=null,fallbackBestScore=Infinity;
+
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1],b=pts[i];
+    const ax=(a.lng-lon)*rad*cos*R, ay=(a.lat-lat)*rad*R;
+    const bx=(b.lng-lon)*rad*cos*R, by=(b.lat-lat)*rad*R;
+    const dx=bx-ax,dy=by-ay,den=dx*dx+dy*dy;
+    let u=den>0?-(ax*dx+ay*dy)/den:0;
+    u=Math.max(0,Math.min(1,u));
+    const x=ax+u*dx,y=ay+u*dy;
+    const d=Math.hypot(x,y);
+    const segLen=Math.max(.01,cum[i]-cum[i-1]);
+    const s=cum[i-1]+segLen*u;
+    const point={lat:lat+y/R/rad,lng:lon+x/R/rad/cos,distance:d,s,segmentIndex:i-1,u};
+
+    if(d<=6&&(!hasTarget||(s>=targetS-22&&s<=targetS+110))){
+      const backPenalty=(hasTarget&&s<targetS-3)?(targetS-3-s)*4:0;
+      const tieBias=-s*1e-6; // slightly prefer forward progress on near-exact ties
+      const score=d+backPenalty+tieBias;
+      if(score<localBestScore){localBestScore=score;localBest=point;}
+    }
+
+    // v6.14: Google-style map matching evidence = proximity + continuity + travel heading.
+    // On divided/parallel roads the nearest geometry alone can be the wrong carriageway.
+    let continuity=0;
+    if(hasTarget){
+      const delta=s-targetS;
+      if(delta<-30)continuity+=Math.min(420,(-delta-30)*2.6);
+      if(delta>260)continuity+=Math.min(240,(delta-260)*.8);
+    }
+    let headingPenalty=0;
+    if(Number.isFinite(travel)&&currentSpeedKmh>=4){
+      const segHeading=bearing(a.lat,a.lng,b.lat,b.lng);
+      const mm=jarvisHeadingMismatch(travel,segHeading);
+      if(mm>115)headingPenalty=260;
+      else if(mm>85)headingPenalty=110;
+      else if(mm>55)headingPenalty=35;
+    }
+    const fscore=d+continuity+headingPenalty;
+    if(fscore<fallbackBestScore){fallbackBestScore=fscore;fallbackBest=point;}
+  }
+
+  const best=localBest||fallbackBest;
+  jarvisMotionDiag.localCorridorUsed=!!localBest;
+  jarvisMotionDiag.localCorridorDistance=localBest?localBest.distance:null;
+  jarvisMotionDiag.fallbackDistance=fallbackBest?fallbackBest.distance:null;
+  jarvisMotionDiag.candidateS=best?best.s:null;
+
+  // スクショ程度のGPS横ズレは確実に吸着。
+  // 120mを超える場合は誤った並走路への固定を避けるため生GPS表示へ逃がす。
+  const accepted=best&&best.distance<=120?best:null;
+  jarvisMotionDiag.projectionDistance=accepted?accepted.distance:null;
+  return accepted;
+}
+
+function jarvisMotionPointAtS(s){
+  if(!jarvisMotionPreparePath())return null;
+  const pts=jarvisMotion.pts,cum=jarvisMotion.cum;
+  s=Math.max(0,Math.min(jarvisMotion.total,Number(s)||0));
+  let lo=0,hi=cum.length-1;
+  while(lo+1<hi){
+    const mid=(lo+hi)>>1;
+    if(cum[mid]<=s)lo=mid;else hi=mid;
+  }
+  const a=pts[lo],b=pts[Math.min(lo+1,pts.length-1)];
+  const len=Math.max(.001,cum[Math.min(lo+1,cum.length-1)]-cum[lo]);
+  const u=Math.max(0,Math.min(1,(s-cum[lo])/len));
+  return {lat:a.lat+(b.lat-a.lat)*u,lng:a.lng+(b.lng-a.lng)*u,s};
+}
+
+function jarvisMotionHeadingAtS(s){
+  if(!jarvisMotionPreparePath())return jarvisTravelHeading()||0;
+  const ss=Math.max(0,Math.min(jarvisMotion.total,Number(s)||0));
+  // Use a road tangent over a meaningful window instead of the next tiny polyline segment.
+  // This prevents the squid/camera heading from following every small vertex wiggle.
+  const speed=Math.max(0,Number(currentSpeedKmh)||0);
+  const back=speed>=35?10:7, forward=speed>=35?28:20;
+  const p1=jarvisMotionPointAtS(Math.max(0,ss-back));
+  const p2=jarvisMotionPointAtS(Math.min(jarvisMotion.total,ss+forward));
+  if(!p1||!p2)return jarvisTravelHeading()||0;
+  if(Math.abs(p1.lat-p2.lat)<1e-9&&Math.abs(p1.lng-p2.lng)<1e-9)return jarvisTravelHeading()||0;
+  return bearing(p1.lat,p1.lng,p2.lat,p2.lng);
+}
+
+
+function jarvisNorm180(v){return ((+v||0)+540)%360-180;}
+function jarvisTurnManeuver(step){
+  const ni=step?.navigationInstruction||step?.navigationInstructions||null;
+  return String(ni?.maneuver||step?.maneuver||'').toUpperCase();
+}
+function jarvisTurnDir(step){
+  const m=jarvisTurnManeuver(step);
+  // Ordinary intersection turn only. Exit/fork/keep are a separate guidance class.
+  if(!m||/(KEEP|MERGE|FORK|RAMP|STRAIGHT|CONTINUE|ROUNDABOUT|DESTINATION)/.test(m))return null;
+  if(/U[_-]?TURN|UTURN/.test(m))return null;
+  if(/LEFT/.test(m))return'LEFT';
+  if(/RIGHT/.test(m))return'RIGHT';
+  return null;
+}
+function jarvisManeuverDir(m){
+  m=String(m||'').toUpperCase();
+  if(/LEFT/.test(m))return'LEFT';
+  if(/RIGHT/.test(m))return'RIGHT';
+  return null;
+}
+function jarvisStepInstruction(step){
+  const ni=step?.navigationInstruction||step?.navigationInstructions||null;
+  return jarvisCleanInstruction(ni?.instructions||step?.instructions||'');
+}
+function jarvisInstructionClass(step){
+  const t=jarvisStepInstruction(step);
+  const u=t.toUpperCase();
+  if(!t)return null;
+
+  // Google Maps JS can return a generic maneuver (SLIGHT/STRAIGHT/NAME_CHANGE)
+  // while the human-readable instruction still clearly says "exit/ramp/fork".
+  // Rescue those cases instead of throwing the guidance away.
+  if(/出口|降り口|降りる|ランプ|EXIT|OFF[-_ ]?RAMP|RAMP/.test(u))return'EXIT';
+  if(/分岐|FORK|KEEP\s+(LEFT|RIGHT)|LEFT\s+FORK|RIGHT\s+FORK/.test(u))return'DIVERGE';
+  if(/合流|MERGE/.test(u))return'MERGE';
+
+  // Japanese route instructions often express a branch as "○○方面へ".
+  // Treat it as a divergence only when a left/right cue is also present.
+  if(/方面/.test(t) && /(左|右)/.test(t))return'DIVERGE';
+  return null;
+}
+function jarvisInstructionDir(step){
+  const t=jarvisStepInstruction(step);
+  const u=t.toUpperCase();
+  // Prefer explicit text direction if maneuver itself is generic.
+  if(/左|LEFT/.test(u))return'LEFT';
+  if(/右|RIGHT/.test(u))return'RIGHT';
+  return null;
+}
+function jarvisTurnStrength(step){
+  const m=jarvisTurnManeuver(step);
+  const byText=jarvisInstructionClass(step);
+
+  // Instruction text gets first chance for exit/fork/merge because the
+  // Maps JS maneuver may be generic at Japanese interchanges.
+  if(byText)return byText;
+
+  if(!m)return'MISSING';
+  if(/U[_-]?TURN|UTURN|ROUNDABOUT|DESTINATION/.test(m))return'NO';
+  if(/EXIT|OFF[_-]?RAMP|RAMP/.test(m))return'EXIT';
+  if(/FORK|KEEP/.test(m))return'DIVERGE';
+  if(/MERGE/.test(m))return'MERGE';
+  if(/SLIGHT/.test(m)&&/(LEFT|RIGHT)/.test(m))return'SLIGHT';
+  if(/(LEFT|RIGHT)/.test(m))return'HARD';
+  if(/STRAIGHT|CONTINUE|NAME_CHANGE|DEPART/.test(m))return'NO';
+  return'NO';
+}
+function jarvisGuidanceKind(strength){
+  if(strength==='EXIT')return'EXIT';
+  if(strength==='DIVERGE')return'DIVERGE';
+  if(strength==='MERGE')return'MERGE';
+  return'TURN';
+}
+function jarvisGuidanceVoiceText(ev,level){
+  const dir=ev?.dir;
+  if(ev?.kind==='EXIT'){
+    if(level==='approach')return dir==='LEFT'?'まもなく左の出口です':dir==='RIGHT'?'まもなく右の出口です':'まもなく出口です';
+    return dir==='LEFT'?'左の出口です':dir==='RIGHT'?'右の出口です':'出口です';
+  }
+  if(ev?.kind==='DIVERGE'){
+    if(level==='approach')return dir==='LEFT'?'まもなく左方向です':dir==='RIGHT'?'まもなく右方向です':'まもなく分岐です';
+    return dir==='LEFT'?'左方向です':dir==='RIGHT'?'右方向です':'分岐です';
+  }
+  if(ev?.kind==='MERGE'){
+    return level==='approach'?'まもなく合流します':'合流します';
+  }
+  if(level==='approach')return dir==='RIGHT'?'まもなく右折です':'まもなく左折です';
+  return dir==='RIGHT'?'右折です':'左折です';
+}
+function jarvisRefineTurnS(baseS,dir){
+  let bestS=baseS,bestScore=-Infinity;
+  for(let ds=-26;ds<=26;ds+=1){
+    const s=Math.max(6,Math.min(jarvisMotion.total-6,baseS+ds));
+    const delta=jarvisNorm180(jarvisMotionHeadingAtS(s+6)-jarvisMotionHeadingAtS(s-6));
+    const signOK=(dir==='RIGHT'&&delta>0)||(dir==='LEFT'&&delta<0);
+    const score=(signOK?Math.abs(delta):Math.abs(delta)*.12)-Math.abs(ds)*.07;
+    if(score>bestScore){bestScore=score;bestS=s;}
