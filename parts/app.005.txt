@@ -1,0 +1,200 @@
+    // Instead the marker behaves like a small vehicle: speed changes are acceleration-limited,
+    // heading turns gradually, and GPS error is only bled off with a slow capped correction.
+    const desiredV=Math.max(0,Math.min(32,jarvisFreeMotion.speedMps));
+    const maxAccel=2.6; // m/s^2 visual acceleration limit
+    const dv=Math.max(-maxAccel*dt,Math.min(maxAccel*dt,desiredV-(jarvisFreeMotion.renderSpeedMps||0)));
+    jarvisFreeMotion.renderSpeedMps=Math.max(0,(jarvisFreeMotion.renderSpeedMps||0)+dv);
+    if(Number.isFinite(jarvisFreeMotion.targetHeading))
+      jarvisFreeMotion.displayHeading=smoothHeading(jarvisFreeMotion.displayHeading,jarvisFreeMotion.targetHeading,1-Math.exp(-dt/1.25));
+    const moveH=Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:(jarvisFreeMotion.targetHeading||0);
+    const forward=jarvisFreeForward(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,moveH,jarvisFreeMotion.renderSpeedMps*dt);
+    let nLat=forward.lat,nLng=forward.lng;
+    const remain=haversine({latitude:nLat,longitude:nLng},{latitude:d.lat,longitude:d.lng});
+    if(remain>.15){
+      const corrBearing=bearing(nLat,nLng,d.lat,d.lng);
+      const corrRate=remain>25?2.0:remain>12?1.35:.85; // m/s correction, never a jump
+      const corr=jarvisFreeForward(nLat,nLng,corrBearing,Math.min(remain,corrRate*dt));
+      nLat=corr.lat;nLng=corr.lng;
+    }
+    jarvisFreeMotion.displayLat=nLat;jarvisFreeMotion.displayLon=nLng;
+  }else{
+    const k=1-Math.pow(1-gain,Math.max(1,dt*60));
+    let moveLat=(d.lat-jarvisFreeMotion.displayLat)*k,moveLng=(d.lng-jarvisFreeMotion.displayLon)*k;
+    // v6.14.44: hard per-frame movement cap on the visible marker, mirroring the cap
+    // jarvisFollowCameraUpdate's DEVIATING mode already applies to the CAMERA. The gain above is
+    // intentionally distance-tiered (bigger gap -> bigger gain) so ordinary lag closes quickly,
+    // but that same tiering means a gap that happens to grow past a tier threshold - e.g. because
+    // only a couple of animation frames actually ran during one GPS-fix interval, as observed
+    // under real CPU contention (this exact case: PARALLEL constantly re-entering OFF_ROUTE/
+    // REROUTING every few fixes while several other scenarios' map objects were still alive in
+    // the same tab) - gets closed in one disproportionately large frame the moment normal frame
+    // delivery resumes. Capping the per-frame MARKER movement (not the gain itself) bounds that
+    // worst case without changing how quickly ordinary, evenly-paced frames converge.
+    const moveM=haversine({latitude:jarvisFreeMotion.displayLat,longitude:jarvisFreeMotion.displayLon},{latitude:jarvisFreeMotion.displayLat+moveLat,longitude:jarvisFreeMotion.displayLon+moveLng});
+    const maxFrameMoveM=Math.max(2.5,(Math.max(6,Number(currentSpeedKmh)||0)/3.6)*dt*4.5);
+    if(moveM>maxFrameMoveM&&moveM>0){const r=maxFrameMoveM/moveM;moveLat*=r;moveLng*=r;}
+    jarvisFreeMotion.displayLat+=moveLat;jarvisFreeMotion.displayLon+=moveLng;
+    if(Number.isFinite(jarvisFreeMotion.targetHeading))
+      jarvisFreeMotion.displayHeading=smoothHeading(jarvisFreeMotion.displayHeading,jarvisFreeMotion.targetHeading,escape?(acc<=20?.12:.09):(jarvisFreeMotion.speedMps>2?.08:.055));
+  }
+  const mh=headingUpMode&&Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:0;
+  navSquidOverlay?.setPosition(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,headingUpMode?0:(jarvisFreeMotion.displayHeading||0));
+  if(now-jarvisFreeMotion.lastCameraAt>=70){
+    jarvisFreeMotion.lastCameraAt=now;
+    const camHeading=Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:(jarvisTravelHeading()||0);
+    // Preserve the v6.14.8 adaptive zoom policy, but apply it to the route-independent
+    // display location instead of the route-projected pose.
+    const displayZoom=(navSessionStarted&&navMode==='ROUTE')?jarvisAdaptiveNavZoom(jarvisCurrentGuidanceEvent()):18;
+    const cc=jarvisCameraCenterAhead(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,camHeading,displayZoom);
+    jarvisFollowCameraUpdate(cc.lat,cc.lng,camHeading,displayZoom,now,false);
+  }
+ };jarvisFreeMotion.raf=requestAnimationFrame(tick);
+}
+
+
+
+
+function jarvisSetRouteGuidanceAppearance(active=true){
+  try{
+    navRouteLine?.setOptions?.({strokeOpacity:active?.98:.22,strokeWeight:active?11:7});
+  }catch(e){}
+}
+
+function jarvisEnterDeviationEscape(reason='OFF_ROUTE'){
+  if(jarvisDeviationEscape)return;
+  jarvisDeviationEscape=true;
+  jarvisDeviationStartedAt=Date.now();
+  jarvisDeviationGpsIsolationUntil=jarvisDeviationStartedAt+5000;
+  jarvisPendingRouteRejoin=false;
+  jarvisPendingRouteRejoinFixes=0;
+  jarvisPendingRouteRejoinStartedAt=0;
+  // v6.14.19: display-location ownership never changes at deviation. The same
+  // route-independent estimator has already been following accepted GPS fixes while TRACKING,
+  // so OFF_ROUTE/REROUTING only changes guidance state and camera policy.
+  if(!Number.isFinite(jarvisFreeMotion.displayLat)&&typeof currentLat==='number'&&typeof currentLon==='number'){
+    jarvisFreeMotion.displayLat=currentLat;jarvisFreeMotion.displayLon=currentLon;
+    jarvisFreeMotion.displayHeading=jarvisTravelHeading()||0;
+  }
+  if(typeof currentLat==='number'&&typeof currentLon==='number'){
+    jarvisFreeMotion.targetLat=currentLat;jarvisFreeMotion.targetLon=currentLon;
+  }
+  const travel=jarvisTravelHeading();if(Number.isFinite(travel))jarvisFreeMotion.targetHeading=travel;
+  jarvisFreeMotion.renderSpeedMps=Math.max(0,Math.min(32,(Number(currentSpeedKmh)||0)/3.6));
+  jarvisFreeMotion.lastFixAt=performance.now();
+  // Preserve the on-screen camera pose. Resetting here caused an immediate jump to the
+  // new GPS/course target in heading-up mode. Instead, enter a deliberate zoom-out/rotate phase.
+  jarvisSetRerouteCameraMode('DEVIATING');
+  jarvisFreeMotionStart();
+  jarvisClearTurnArrow?.();
+  jarvisSetRouteGuidanceAppearance(false); // stale route remains only as a quiet reference while rerouting
+  jarvisSetStatus(reason==='HEADING'?'進行方向を変更：現在位置を追従しながら再検索中…':'ルート逸脱：現在位置を追従しながら再検索中…','warn');
+}
+function jarvisExitDeviationEscape(){
+  if(jarvisRerouteCamera.mode==='DEVIATING'&&!jarvisPendingRouteRejoin)jarvisSetRerouteCameraMode('NORMAL');
+  jarvisDeviationEscape=false;
+  jarvisVisualGpsPriority=false;
+  jarvisVisualOnRouteFixes=0;
+  jarvisDeviationEvidence=0;
+  jarvisDeviationStartedAt=0;
+  jarvisDeviationGpsIsolationUntil=0;
+  jarvisPendingRouteRejoin=false;
+  jarvisPendingRouteRejoinFixes=0;
+  jarvisPendingRouteRejoinStartedAt=0;
+  jarvisExitUTurnRecovery();
+  jarvisSetRouteGuidanceAppearance(true);
+}
+
+function jarvisMotionReset(keepFrame=false){
+  jarvisMotion.path=null;
+  jarvisMotion.pts=null;
+  jarvisMotion.cum=null;
+  jarvisMotion.total=0;
+  jarvisMotion.targetS=null;
+  jarvisMotion.displayS=null;
+  jarvisMotion.lastFixAt=0;
+  jarvisMotion.speedMps=0;
+  jarvisMotion.displayHeading=null;
+  jarvisMotion.lastProjection=null;
+  jarvisMotion.lastFrameAt=0;
+  jarvisMotion.lastCameraAt=0;
+  jarvisDepartureFixes=0;
+  jarvisMotionDiag.projectionS=null;
+  jarvisMotionDiag.candidateS=null;
+  jarvisMotionDiag.projectionDistance=null;
+  jarvisMotionDiag.localCorridorUsed=null;
+  jarvisMotionDiag.localCorridorDistance=null;
+  jarvisMotionDiag.fallbackDistance=null;
+  jarvisMotionDiag.mismatch=null;
+  jarvisMotionDiag.departureCandidate=false;
+  jarvisMotionDiag.departureFixes=0;
+  jarvisMotionDiag.visualThreshold=null;
+  if(!keepFrame&&jarvisMotion.raf){
+    cancelAnimationFrame(jarvisMotion.raf);
+    jarvisMotion.raf=null;
+  }
+}
+
+// ===== v6.14.12 route geometry stabilizer =====
+// Google Routes HIGH_QUALITY remains the source of truth.  We only remove tiny
+// sub-lane zigzags that are visually noisy and can make segment-by-segment map matching
+// oscillate. Genuine bends/intersections are preserved by a strict lateral-deviation cap.
+function jarvisPointLineDeviationMeters(a,b,p){
+  const R=6371000,rad=Math.PI/180,lat0=p.lat*rad,cos=Math.max(.15,Math.cos(lat0));
+  const ax=(a.lng-p.lng)*rad*cos*R,ay=(a.lat-p.lat)*rad*R;
+  const bx=(b.lng-p.lng)*rad*cos*R,by=(b.lat-p.lat)*rad*R;
+  const dx=bx-ax,dy=by-ay,den=dx*dx+dy*dy;
+  let u=den>0?-(ax*dx+ay*dy)/den:0;u=Math.max(0,Math.min(1,u));
+  return Math.hypot(ax+u*dx,ay+u*dy);
+}
+function jarvisStabilizeRoutePath(base){
+  const src=(base||[]).map(jarvisNormalizePathPoint).filter(Boolean);
+  if(src.length<3)return src;
+  let pts=src.slice();
+  // Two conservative passes. Only remove a middle point when the direct chord is short
+  // and the point is within roughly one metre of it. This suppresses encoded-polyline
+  // micro-zigzags without rounding real road corners or ramp geometry.
+  for(let pass=0;pass<2;pass++){
+    const out=[pts[0]];
+    for(let i=1;i<pts.length-1;i++){
+      const a=out[out.length-1],p=pts[i],b=pts[i+1];
+      const ap=haversine({latitude:a.lat,longitude:a.lng},{latitude:p.lat,longitude:p.lng});
+      const pb=haversine({latitude:p.lat,longitude:p.lng},{latitude:b.lat,longitude:b.lng});
+      const ab=haversine({latitude:a.lat,longitude:a.lng},{latitude:b.lat,longitude:b.lng});
+      const dev=jarvisPointLineDeviationMeters(a,b,p);
+      const shortMicro=(ap<=18&&pb<=18&&ab<=36&&dev<=1.8);
+      const duplicate=(ap<0.65)||(pb<0.65);
+      if(shortMicro||duplicate)continue;
+      out.push(p);
+    }
+    out.push(pts[pts.length-1]);
+    pts=out;
+  }
+  return pts;
+}
+function jarvisMotionPath(){
+  return (routeCandidates[selectedRouteIndex]||routeData)?.path||null;
+}
+
+function jarvisMotionPreparePath(){
+  const path=jarvisMotionPath();
+  if(!Array.isArray(path)||path.length<2)return false;
+  if(jarvisMotion.path===path&&jarvisMotion.pts?.length===path.length)return true;
+
+  const pts=path.map(jarvisNormalizePathPoint).filter(Boolean);
+  if(pts.length<2)return false;
+  const cum=[0];
+  for(let i=1;i<pts.length;i++){
+    cum[i]=cum[i-1]+haversine(
+      {latitude:pts[i-1].lat,longitude:pts[i-1].lng},
+      {latitude:pts[i].lat,longitude:pts[i].lng}
+    );
+  }
+  jarvisMotion.path=path;
+  jarvisMotion.pts=pts;
+  jarvisMotion.cum=cum;
+  jarvisMotion.total=cum[cum.length-1];
+  jarvisMotion.targetS=null;
+  jarvisMotion.displayS=null;
+  jarvisMotion.lastProjection=null;
+  return true;
+}
