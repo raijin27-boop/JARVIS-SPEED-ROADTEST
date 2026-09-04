@@ -1,0 +1,200 @@
+    capacity,items:new Array(capacity),writeIndex:0,count:0,
+    push(item){this.items[this.writeIndex]=item;this.writeIndex=(this.writeIndex+1)%this.capacity;this.count=Math.min(this.capacity,this.count+1);},
+    toArray(){
+      if(this.count<this.capacity)return this.items.slice(0,this.count);
+      return this.items.slice(this.writeIndex).concat(this.items.slice(0,this.writeIndex));
+    }
+  };
+}
+
+function jarvisRoadTestNewSessionId(){return `rt-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;}
+function jarvisRoadTestClearSession(){
+  jarvisRoadTestSessionId=jarvisRoadTestNewSessionId();
+  jarvisRoadTestSessionStartedAt=Date.now();
+  jarvisRoadTestBuffer=jarvisRoadTestCreateRingBuffer(JARVIS_ROAD_TEST_CAPACITY);
+  jarvisRoadTestMarkers=[];
+  jarvisRoadTestErrors=[];
+  jarvisRoadTestRejectedFixCount=0;
+  jarvisRoadTestVoiceEventsSeen=(window.__jarvisVoiceEvents||[]).length;
+  jarvisRoadTestLastState=null;
+  jarvisRoadTestLastGuidanceKind=null;
+  jarvisRoadTestLastProjectionS=null;
+  jarvisRoadTestLastDisplayPos=null;
+  jarvisRoadTestLastDeviationEscape=false;
+  jarvisRoadTestLastPendingRejoin=false;
+  jarvisRoadTestLastRouteLastAt=typeof routeLastAt!=='undefined'?routeLastAt:0;
+}
+function jarvisRoadTestStart(){jarvisRoadTestEnabled=true;jarvisRoadTestClearSession();}
+function jarvisRoadTestStop(){jarvisRoadTestEnabled=false;}
+function jarvisRoadTestLogError(context,err){
+  try{
+    jarvisRoadTestErrors.push({t:Date.now(),context,message:String(err&&err.message||err||'')});
+    if(jarvisRoadTestErrors.length>JARVIS_ROAD_TEST_ERROR_CAPACITY)jarvisRoadTestErrors.shift();
+  }catch(e){}
+}
+function jarvisRoadTestMarker(kind,detail){
+  try{
+    const m={t:Date.now(),kind,detail:detail||null};
+    jarvisRoadTestMarkers.push(m);
+    if(jarvisRoadTestMarkers.length>JARVIS_ROAD_TEST_MARKER_CAPACITY)jarvisRoadTestMarkers.shift();
+    return m;
+  }catch(e){jarvisRoadTestLogError('marker',e);return null;}
+}
+// Called from enterResumeGuard() (app resume from hidden/background) and the wake-lock request/
+// release functions — events that can happen between GPS fixes, not just at one.
+function jarvisRoadTestNoteLifecycle(kind,detail){
+  if(!jarvisRoadTestEnabled)return;
+  jarvisRoadTestMarker(kind,detail);
+}
+// Called from onPosition()'s f.accepted===false branch — counts fixes rejected for accuracy/
+// resume-guard/reasonable-speed reasons, per the export summary metrics spec.
+function jarvisRoadTestNoteRejectedFix(reason){
+  if(!jarvisRoadTestEnabled)return;
+  jarvisRoadTestRejectedFixCount++;
+}
+
+// One compact event per accepted GPS/navigation update (called at the end of onPosition()).
+// High-signal markers (§3 of the spec) are detected here, against the PREVIOUS fix's recorded
+// state, and appended to jarvisRoadTestMarkers — never by changing any routing/guidance decision.
+function jarvisRoadTestRecordFix(c,sp){
+  if(!jarvisRoadTestEnabled||!jarvisRoadTestBuffer)return;
+  try{
+    const vp=(typeof jarvisGetVehiclePose==='function')?jarvisGetVehiclePose():null;
+    const guidance=(()=>{try{return jarvisCurrentGuidanceEvent();}catch(e){return null;}})();
+    const nextTurn=(()=>{try{return jarvisNextTurnInfo();}catch(e){return null;}})();
+    const projectionS=(typeof jarvisMotionDiag!=='undefined')?jarvisMotionDiag.projectionS:null;
+    const candidateS=(typeof jarvisMotionDiag!=='undefined')?jarvisMotionDiag.candidateS:null;
+    const crossTrack=(typeof jarvisMotionDiag!=='undefined'&&Number.isFinite(jarvisMotionDiag.projectionDistance))?jarvisMotionDiag.projectionDistance:((typeof jarvisRerouteDiag!=='undefined')?jarvisRerouteDiag.rerouteDistance:null);
+    const navState=typeof jarvisNavTrackingState!=='undefined'?jarvisNavTrackingState:null;
+
+    const allVoice=window.__jarvisVoiceEvents||[];
+    const newVoice=allVoice.slice(jarvisRoadTestVoiceEventsSeen).map(v=>({key:v.key,level:v.level,accepted:v.accepted,reason:v.reason}));
+    jarvisRoadTestVoiceEventsSeen=allVoice.length;
+
+    const event={
+      t:Date.now(),
+      gps:{lat:c.latitude,lng:c.longitude,accuracy:Number(c.accuracy)},
+      speed:{raw:Number.isFinite(sp)?sp:null,filtered:typeof currentSpeedKmh!=='undefined'?currentSpeedKmh:null},
+      heading:{value:typeof currentHeading==='number'?currentHeading:null,source:typeof headingSource!=='undefined'?headingSource:null},
+      vehiclePose:vp?{lat:vp.lat,lng:vp.lng,heading:vp.heading,speedMps:vp.speedMps,source:vp.source,confidence:vp.confidence}:null,
+      projectionS,candidateS,crossTrackDistance:crossTrack,
+      navState,
+      deviationEvidence:typeof jarvisDeviationEvidence!=='undefined'?jarvisDeviationEvidence:null,
+      autoRerouteOffRouteFixes:typeof autoRerouteOffRouteFixes!=='undefined'?autoRerouteOffRouteFixes:null,
+      deviationEscape:typeof jarvisDeviationEscape!=='undefined'?jarvisDeviationEscape:null,
+      visualGpsPriority:typeof jarvisVisualGpsPriority!=='undefined'?jarvisVisualGpsPriority:null,
+      pendingRouteRejoin:typeof jarvisPendingRouteRejoin!=='undefined'?jarvisPendingRouteRejoin:null,
+      pendingRouteRejoinFixes:typeof jarvisPendingRouteRejoinFixes!=='undefined'?jarvisPendingRouteRejoinFixes:null,
+      guidance:guidance?{kind:guidance.kind,maneuver:guidance.maneuver,distance:guidance.distance,turnDeg:guidance.turnDeg}:null,
+      routeRequestSeq:typeof routeRequestSeq!=='undefined'?routeRequestSeq:null,
+      routeIntegrityStatus:(typeof jarvisRouteIntegrity!=='undefined')?jarvisRouteIntegrity.status:null,
+      followMode:typeof navMapFollow!=='undefined'?navMapFollow:null,
+      cameraMode:(typeof jarvisRerouteCamera!=='undefined')?jarvisRerouteCamera.mode:null,
+      voiceAttempts:newVoice.length?newVoice:undefined
+    };
+    jarvisRoadTestBuffer.push(event);
+
+    // ---- high-signal markers (§3): compared against the previous fix only, never changing any
+    // routing/guidance decision itself. ----
+    if(jarvisRoadTestLastState!=='OFF_ROUTE'&&navState==='OFF_ROUTE')jarvisRoadTestMarker('OFF_ROUTE_BEGIN',{lat:c.latitude,lng:c.longitude});
+    if(jarvisRoadTestLastState!=='REROUTING'&&navState==='REROUTING')jarvisRoadTestMarker('REROUTING_BEGIN',{lat:c.latitude,lng:c.longitude});
+    if(jarvisRoadTestLastState==='REROUTING'&&navState!=='REROUTING')jarvisRoadTestMarker('REROUTING_END',{navState});
+    if(jarvisRoadTestLastState!=='ARRIVED'&&navState==='ARRIVED')jarvisRoadTestMarker('ARRIVED',{lat:c.latitude,lng:c.longitude});
+
+    const routeLastAtNow=typeof routeLastAt!=='undefined'?routeLastAt:0;
+    if(routeLastAtNow!==jarvisRoadTestLastRouteLastAt&&(jarvisRoadTestLastState==='OFF_ROUTE'||jarvisRoadTestLastState==='REROUTING'))
+      jarvisRoadTestMarker('REROUTE_ACCEPTED',{routeRequestSeq:event.routeRequestSeq});
+    jarvisRoadTestLastRouteLastAt=routeLastAtNow;
+
+    const pendingRejoinNow=!!event.pendingRouteRejoin;
+    if(!jarvisRoadTestLastPendingRejoin&&pendingRejoinNow)jarvisRoadTestMarker('REJOIN_BEGIN',{});
+    if(jarvisRoadTestLastDeviationEscape&&!event.deviationEscape)jarvisRoadTestMarker('REJOIN_END',{});
+    jarvisRoadTestLastPendingRejoin=pendingRejoinNow;
+    jarvisRoadTestLastDeviationEscape=!!event.deviationEscape;
+
+    if(vp&&jarvisRoadTestLastDisplayPos){
+      const stepM=haversine({latitude:jarvisRoadTestLastDisplayPos.lat,longitude:jarvisRoadTestLastDisplayPos.lng},{latitude:vp.lat,longitude:vp.lng});
+      if(stepM>25)jarvisRoadTestMarker('VEHICLE_POSE_LARGE_STEP',{stepM:Math.round(stepM*10)/10,speedKmh:event.speed.filtered});
+    }
+    if(vp)jarvisRoadTestLastDisplayPos={lat:vp.lat,lng:vp.lng};
+
+    if(Number.isFinite(projectionS)&&Number.isFinite(jarvisRoadTestLastProjectionS)){
+      const deltaS=projectionS-jarvisRoadTestLastProjectionS;
+      const speedMps=Math.max(0,(Number(event.speed.filtered)||0)/3.6);
+      const plausibleForward=Math.max(80,speedMps*3+50);
+      if(deltaS<-30)jarvisRoadTestMarker('ROUTE_PROJECTION_BACKWARD_JUMP',{deltaS:Math.round(deltaS)});
+      else if(deltaS>plausibleForward)jarvisRoadTestMarker('ROUTE_PROJECTION_FORWARD_JUMP',{deltaS:Math.round(deltaS),plausibleForward:Math.round(plausibleForward)});
+    }
+    jarvisRoadTestLastProjectionS=Number.isFinite(projectionS)?projectionS:jarvisRoadTestLastProjectionS;
+
+    const guidanceKindNow=guidance?guidance.kind:null;
+    if(guidanceKindNow!==jarvisRoadTestLastGuidanceKind&&guidanceKindNow&&['EXIT','DIVERGE','MERGE'].includes(guidanceKindNow))
+      jarvisRoadTestMarker('MANEUVER_CLASS_CHANGE',{kind:guidanceKindNow,maneuver:guidance?.maneuver||null});
+    jarvisRoadTestLastGuidanceKind=guidanceKindNow;
+
+    if(nextTurn&&Number.isFinite(nextTurn.distance)&&nextTurn.distance<=100&&nextTurn.distance>=0&&!guidance)
+      jarvisRoadTestMarker('GUIDANCE_EXPECTED_BUT_MISSING',{turnDistance:Math.round(nextTurn.distance)});
+    if(guidance&&guidance.kind==='TURN'&&Number.isFinite(guidance.turnDeg)&&guidance.turnDeg<8)
+      jarvisRoadTestMarker('GUIDANCE_TURN_BUT_STRAIGHT_GEOMETRY',{turnDeg:guidance.turnDeg,distance:guidance.distance});
+
+    jarvisRoadTestLastState=navState;
+  }catch(e){jarvisRoadTestLogError('recordFix',e);}
+}
+
+// Same duplicate/order-error algorithm as the simulator's analyzeVoice() in
+// navigation-simulator-core.js, duplicated here (rather than shared) because this file has no
+// build-time dependency on that simulator-only module and must work standalone in the real app.
+function jarvisRoadTestVoiceCounts(){
+  const events=(window.__jarvisVoiceEvents||[]).filter(e=>e.sessionId===jarvisVoiceSessionId);
+  const accepted=events.filter(e=>e.accepted);
+  const byBase={};
+  for(const e of accepted){
+    if(!e.key)continue;
+    const parts=String(e.key).split(':');
+    const base=parts.slice(0,2).join(':'),level=parts[2]||e.level||'';
+    (byBase[base]=byBase[base]||[]).push({at:e.at,level});
+  }
+  let voiceDuplicateCount=0,voiceOrderErrors=0;
+  for(const base of Object.keys(byBase)){
+    const seq=byBase[base].sort((a,b)=>a.at-b.at);
+    const byLevel={};
+    for(const s of seq)(byLevel[s.level]=byLevel[s.level]||[]).push(s.at);
+    for(const level of Object.keys(byLevel))if(byLevel[level].length>1)voiceDuplicateCount+=byLevel[level].length-1;
+    const approach=byLevel.approach?.[0],near=byLevel.near?.[0];
+    if(approach!==undefined&&near!==undefined&&near<approach)voiceOrderErrors++;
+  }
+  return{voiceDuplicateCount,voiceOrderErrors};
+}
+function jarvisRoadTestSummary(events){
+  events=events||(jarvisRoadTestBuffer?jarvisRoadTestBuffer.toArray():[]);
+  let maxVehiclePoseStep=0,offRouteFixes=0,rerouteBeginCount=0,rejoinCount=0,maneuverEvents=0;
+  let prev=null;
+  for(const e of events){
+    if(e.navState==='OFF_ROUTE'||e.navState==='REROUTING')offRouteFixes++;
+    if(prev&&prev.vehiclePose&&e.vehiclePose){
+      const d=haversine({latitude:prev.vehiclePose.lat,longitude:prev.vehiclePose.lng},{latitude:e.vehiclePose.lat,longitude:e.vehiclePose.lng});
+      maxVehiclePoseStep=Math.max(maxVehiclePoseStep,d);
+    }
+    if(e.guidance)maneuverEvents++;
+    prev=e;
+  }
+  for(const m of jarvisRoadTestMarkers){
+    if(m.kind==='REROUTING_BEGIN')rerouteBeginCount++;
+    if(m.kind==='REJOIN_BEGIN')rejoinCount++;
+  }
+  const voice=jarvisRoadTestVoiceCounts();
+  return{
+    // "maximum displayed-vehicle single-step distance if separately observable": VehiclePose IS
+    // the displayed vehicle position (see README's VehiclePose section) in this build, so there
+    // is no second, independently-observable value — both fields report the same number rather
+    // than fabricating a distinct one.
+    maxVehiclePoseStepM:Math.round(maxVehiclePoseStep*10)/10,
+    maxDisplayStepM:Math.round(maxVehiclePoseStep*10)/10,
+    offRouteFixCount:offRouteFixes,
+    reroutingBeginCount:rerouteBeginCount,
+    routeRequestCount:events.length?Math.max(...events.map(e=>Number(e.routeRequestSeq)||0)):0,
+    rejoinCount,
+    maneuverEventCount:maneuverEvents,
+    voiceDuplicateCount:voice.voiceDuplicateCount,
+    voiceOrderErrors:voice.voiceOrderErrors,
+    rejectedFixCount:jarvisRoadTestRejectedFixCount,
