@@ -1,0 +1,5 @@
+  }catch(_){}
+},{capture:true});
+
+
+setInterval(()=>{try{jarvisUpdateGuidanceDiagnostic()}catch(_){ }},1500);
