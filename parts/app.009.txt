@@ -1,0 +1,200 @@
+        desiredS=Math.min(desiredS,jarvisMotion.targetS+2.5);
+    }
+
+    // critically-damped風の追従。大誤差も一発で飛ばず、毎フレーム吸収。
+    const err=desiredS-jarvisMotion.displayS;
+    const alpha=1-Math.exp(-5.2*dt);
+    let step=err*alpha;
+    const maxStep=(Math.max(6,jarvisMotion.speedMps*1.75)+Math.min(18,Math.abs(err)*.55))*dt;
+    step=Math.max(-maxStep,Math.min(maxStep,step));
+    jarvisMotion.displayS=Math.max(0,Math.min(jarvisMotion.total,jarvisMotion.displayS+step));
+
+    const pose=jarvisMotionPointAtS(jarvisMotion.displayS);
+    if(!pose)return;
+    const hdg=jarvisMotionHeadingAtS(jarvisMotion.displayS);
+    const travelHdg=jarvisTravelHeading();
+    // v6.14.14: never pre-rotate into a planned turn. Heading-up follows what the bike
+    // has actually started doing; route bearing is only trusted when it already agrees.
+    // This also keeps a missed turn visually straight until the rider really changes course.
+    let visualHdg=hdg;
+    if(Number.isFinite(travelHdg)&&Number(currentSpeedKmh)>=4){
+      const mm=jarvisHeadingMismatch(travelHdg,hdg);
+      visualHdg=mm>18?travelHdg:smoothHeading(travelHdg,hdg,.18);
+    }
+    jarvisMotion.displayHeading=smoothHeading(jarvisMotion.displayHeading,visualHdg,.055);
+
+    // v6.14.19: route motion is guidance/progress only. It may calculate route heading,
+    // maneuver distance and the white maneuver line, but it must never write the vehicle
+    // marker or camera center. Display position is owned exclusively by jarvisFreeMotion.
+    const turnInfo=jarvisCurrentGuidanceEvent();
+    jarvisUpdateTurnArrow(turnInfo);
+  };
+  jarvisMotion.raf=requestAnimationFrame(tick);
+}
+
+function jarvisTravelHeading(){
+  if(typeof currentHeading==='number'&&isFinite(currentHeading)) return (currentHeading+360)%360;
+  return null;
+}
+function jarvisSquidHeading(){
+  const h=jarvisTravelHeading();
+  if(h!==null)return h;
+  if(destination&&typeof currentLat==='number'&&typeof currentLon==='number') return bearing(currentLat,currentLon,destination.lat,destination.lon);
+  return 0;
+}
+function jarvisApplyMapOrientation(map,which){
+  if(!map)return;
+  const h=jarvisTravelHeading();
+  const target=headingUpMode&&h!==null?h:0;
+  jarvisDiagLastTarget=target;
+  try{
+    const vector3D=(mapViewMode==='3D');
+    const tilt=vector3D?(navSessionStarted?55:45):0;
+    map.setTiltInteractionEnabled?.(vector3D);
+    map.setTilt?.(tilt);
+    map.setHeadingInteractionEnabled?.(true);
+    map.setHeading?.(target);
+  }catch(e){}
+  if(which==='nav'){
+    jarvisHeadingDiag(map,target);
+    setTimeout(()=>jarvisHeadingDiag(map,target),120);
+  }
+  const shell=which==='nav'?$('navMap')?.parentElement:$('landMap')?.parentElement;
+  shell?.classList.toggle('heading-up',headingUpMode);
+}
+function jarvisUpdateHeadingButtons(){
+  const label=headingUpMode?'進行↑':'北↑';
+  setTextIf('headingModeBtn',label);setTextIf('landHeadingModeBtn',label);
+  $('headingModeBtn')?.classList.toggle('active',headingUpMode);
+  $('landHeadingModeBtn')?.classList.toggle('active',headingUpMode);
+}
+async function jarvisToggleHeadingMode(){
+  const next=!headingUpMode;
+  headingUpMode=next;
+  localStorage.setItem('jarvisHeadingUpMode',headingUpMode?'1':'0');
+  jarvisUpdateHeadingButtons();
+  jarvisSyncMaps(true);
+  const h=jarvisTravelHeading();
+  setTextIf('navMapState',headingUpMode?(h===null?'GPS方位待ち（走行すると有効）':'進行方向を上'):'北を上');
+}
+async function jarvisInitMaps(){
+  if(!(window.google&&google.maps)) return;
+  try{
+    if(!jarvisMapsLibrary) jarvisMapsLibrary=await google.maps.importLibrary('maps');
+    jarvisRenderingType=jarvisMapsLibrary.RenderingType.VECTOR;
+    const MapClass=jarvisMapsLibrary.Map;
+    const n=$('navMap'),l=$('landMap');
+    if(n&&!navGoogleMap){
+      navGoogleMap=new MapClass(n,jarvisMapOptions());navSquidOverlay=jarvisCreateSquidOverlay(navGoogleMap);
+      google.maps.event.addListenerOnce(navGoogleMap,'tilesloaded',()=>{
+        const mode=jarvisRenderingLabel(navGoogleMap);
+        setTextIf('navMapState',mode==='VECTOR'?'VECTOR MAP':'回転非対応（RASTER）');
+        jarvisHeadingDiag(navGoogleMap,jarvisDiagLastTarget);
+        jarvisSyncMaps(true);
+      });
+      navGoogleMap.addListener('heading_changed',()=>jarvisHeadingDiag(navGoogleMap,jarvisDiagLastTarget));
+      navGoogleMap.addListener('dragstart',()=>{navMapFollow=false;navMapUserMoved=true;jarvisUpdateRecenterButton()});
+      navGoogleMap.addListener('zoom_changed',()=>{if(navMapUserMoved)jarvisUpdateRecenterButton()});
+      jarvisBindMapLongPress();
+      jarvisRenderViaMarkers();
+    }
+    if(l&&!landGoogleMap){landGoogleMap=new MapClass(l,jarvisMapOptions());landSquidOverlay=jarvisCreateSquidOverlay(landGoogleMap)}
+    jarvisMapsReady=!!(navGoogleMap||landGoogleMap); setTextIf('navMapState',jarvisMapsReady?'Googleマップ':'Googleマップ待機中');
+    jarvisUpdateHeadingButtons();jarvisUpdateThemeButton();jarvisApplyMapView();jarvisSyncTrafficLayers();jarvisSyncMaps(true);jarvisUpdateRecenterButton();if(nearbyPlaces.length)jarvisRenderNearbyMarkers();if(navMode==='ROUTE'&&routeData)jarvisRenderRoute();
+  }catch(e){setTextIf('navMapState','地図初期化エラー');setTextIf('navMapDiag','MAP ERROR '+(e?.message||''))}
+}
+function jarvisEnsureDestMarker(map,which){
+  let marker=which==='nav'?navDestMarker:landDestMarker;
+  if(!marker){marker=new google.maps.Marker({map,title:'目的地'}); if(which==='nav')navDestMarker=marker; else landDestMarker=marker}
+  return marker;
+}
+function jarvisEnsureGuideLine(map,which){
+  let line=which==='nav'?navGuideLine:landGuideLine;
+  if(!line){line=new google.maps.Polyline({map,strokeColor:'#66d9ff',strokeOpacity:.72,strokeWeight:3,geodesic:true}); if(which==='nav')navGuideLine=line; else landGuideLine=line}
+  return line;
+}
+function jarvisRoutePreviewOwnsViewport(){
+  return !!(routePreviewActive&&!navSessionStarted&&navMode==='ROUTE'&&routeCandidates.length>0);
+}
+function jarvisUpdateRecenterButton(){
+  const b=$('recenterBtn');if(!b)return;
+  b.classList.toggle('following',navMapFollow);
+  b.title=navMapFollow?'現在地を追従中':'現在地へ戻る';
+}
+function jarvisCenterOnCurrentPosition(forceZoom=true){
+  // Candidate preview owns the viewport until START; GPS/recenter helpers must not overwrite fitBounds.
+  if(jarvisRoutePreviewOwnsViewport())return false;
+  if(!navGoogleMap||typeof currentLat!=='number'||typeof currentLon!=='number') return false;
+  navMapFollow=true;navMapUserMoved=false;
+  const here={lat:currentLat,lng:currentLon};
+  if(navSessionStarted&&navMode==='ROUTE'){
+    navGoogleMap.setZoom(18);
+    jarvisMotionAcceptFix(currentLat,currentLon,currentSpeedKmh);
+    jarvisMotionStart();
+  }else{
+    navGoogleMap.setCenter(here);
+    if(forceZoom || !navGoogleMap.getZoom() || navGoogleMap.getZoom()<15) navGoogleMap.setZoom(16);
+    jarvisSyncOneMap(navGoogleMap,navSquidOverlay,'nav',true);
+  }
+  jarvisUpdateRecenterButton();
+  return true;
+}
+function jarvisAcquireAndRecenter(showMessage=true){
+  if(!navGoogleMap){if(showMessage)setTextIf('navMapState','Googleマップ待機中');return}
+  jarvisEnsureLocationTracking(false);
+  navMapFollow=true;navMapUserMoved=false;jarvisUpdateRecenterButton();
+  if(typeof currentLat==='number'&&typeof currentLon==='number') jarvisCenterOnCurrentPosition(false);
+  if(!navigator.geolocation){if(showMessage)setTextIf('navMapState','位置情報 非対応');return}
+  if(showMessage)setTextIf('navMapState','現在地を取得中…');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    // 復帰操作では、走行計測を開始せず地図用の現在地だけ即更新する。
+    currentLat=pos.coords.latitude;currentLon=pos.coords.longitude;
+    jarvisCenterOnCurrentPosition(true);
+    jarvisUpdateWeather();updateNav();
+    if(showMessage)setTextIf('navMapState',`現在地へ復帰 ±${Math.round(pos.coords.accuracy)}m`);
+  },err=>{
+    if(jarvisCenterOnCurrentPosition(false)){
+      if(showMessage)setTextIf('navMapState','直前の現在地へ復帰');
+    }else if(showMessage){
+      const msg=err?.code===1?'位置情報の許可を確認':err?.code===3?'現在地取得タイムアウト':'現在地を取得できません';
+      setTextIf('navMapState',msg);
+    }
+  },{enableHighAccuracy:true,maximumAge:0,timeout:12000});
+}
+function jarvisRecenterNav(){
+  jarvisAcquireAndRecenter(true);
+}
+function jarvisSyncOneMap(map,squid,which,force=false){
+  if(!map)return;
+  const hasPos=typeof currentLat==='number'&&typeof currentLon==='number';
+  if(hasPos){
+    const here={lat:currentLat,lng:currentLon};
+    const travelHdg=jarvisTravelHeading();
+    const squidHdg=jarvisSquidHeading();
+
+    // ROUTE走行中のnav地図は60fps motion engineだけに位置更新を任せる。
+    // GPS fixごとのpanTo/setPositionが「うさぎ跳び」を再発させるため、ここでは触らない。
+    const previewLocked=(which==='nav'&&jarvisRoutePreviewOwnsViewport());
+    const continuousNav=(which==='nav'&&navMode==='ROUTE'&&(navSessionStarted||navMapFollow));
+    if(previewLocked){
+      // v6.14.18: route preview owns the viewport. Continuous GPS updates may move the
+      // vehicle marker, but must not pan/zoom over fitBounds and destroy the candidate view.
+      squid?.setPosition(currentLat,currentLon,headingUpMode&&travelHdg!==null?0:squidHdg);
+    }else if(!continuousNav){
+      jarvisApplyMapOrientation(map,which);
+      squid?.setPosition(currentLat,currentLon,headingUpMode&&travelHdg!==null?0:squidHdg);
+      if(which!=='nav'||navMapFollow||force){
+        map.panTo(here);
+        const followZoom=16;
+        if(force||map.getZoom()<14)map.setZoom(followZoom);
+      }
+    }else{
+      jarvisMotionStart();
+    }
+    if(destination){
+      const dest={lat:destination.lat,lng:destination.lon}; jarvisEnsureDestMarker(map,which).setPosition(dest);
+      if(navMode==='ADVENTURE'){jarvisEnsureGuideLine(map,which).setMap(map);jarvisEnsureGuideLine(map,which).setPath([here,dest]);}else{const g=which==='nav'?navGuideLine:landGuideLine;g?.setMap(null);}
+    }else{
+      (which==='nav'?navDestMarker:landDestMarker)?.setMap(null); if(which==='nav')navDestMarker=null; else landDestMarker=null;
+      (which==='nav'?navGuideLine:landGuideLine)?.setMap(null); if(which==='nav')navGuideLine=null; else landGuideLine=null;
+    }
