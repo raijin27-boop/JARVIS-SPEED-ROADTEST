@@ -1,0 +1,200 @@
+  const content=document.createElement('div');content.className='jarvis-place-popup';
+  const media=document.createElement('div');media.className='jarvis-place-media hidden';content.appendChild(media);
+  const title=document.createElement('strong');title.textContent=item.name;content.appendChild(title);
+  const meta=document.createElement('div');meta.className='jarvis-place-meta';meta.textContent=`${dist} ・ ${item.address||''}`;content.appendChild(meta);
+  const facts=document.createElement('div');facts.className='jarvis-place-facts';facts.textContent='店舗情報を取得中…';content.appendChild(facts);
+  const set=document.createElement('button');set.type='button';set.textContent='目的地にする';
+  set.addEventListener('click',()=>{saveDestination({name:item.name,lat:item.lat,lon:item.lon});jarvisSetStatus(`目的地SET：${item.name}`,'ok');info.close();updateNav();});
+  content.appendChild(set); info.setContent(content); info.open({map,anchor:marker});
+  map.panTo({lat:item.lat,lng:item.lon});
+  if(!item.placeId){facts.textContent='';return;}
+  try{
+    const {Place}=await google.maps.importLibrary('places');
+    const detail=new Place({id:item.placeId});
+    await detail.fetchFields({fields:['photos','rating','userRatingCount','nationalPhoneNumber','websiteURI','googleMapsURI']});
+    const lines=[];
+    if(Number.isFinite(detail.rating)) lines.push(`★ ${detail.rating.toFixed(1)}${detail.userRatingCount?`（${detail.userRatingCount}件）`:''}`);
+    if(detail.nationalPhoneNumber) lines.push(`☎ ${detail.nationalPhoneNumber}`);
+    facts.textContent=lines.join(' ・ ') || '店舗情報あり';
+    const links=document.createElement('div');links.className='jarvis-place-links';
+    if(detail.websiteURI){const a=document.createElement('a');a.href=detail.websiteURI;a.target='_blank';a.rel='noopener';a.textContent='公式サイト';links.appendChild(a);}
+    if(detail.googleMapsURI){const a=document.createElement('a');a.href=detail.googleMapsURI;a.target='_blank';a.rel='noopener';a.textContent='Googleマップ';links.appendChild(a);}
+    if(links.childNodes.length) content.insertBefore(links,set);
+    const photo=detail.photos?.[0];
+    if(photo){
+      const img=document.createElement('img');img.className='jarvis-place-photo';img.alt='';img.src=photo.getURI({maxWidth:420,maxHeight:220});media.appendChild(img);
+      const attrs=photo.authorAttributions||[];
+      if(attrs.length){const at=document.createElement('small');at.className='jarvis-photo-credit';at.append('写真: ');attrs.forEach((a,j)=>{if(j)at.append(', ');if(a.uri){const l=document.createElement('a');l.href=a.uri;l.target='_blank';l.rel='noopener';l.textContent=a.displayName||'Google user';at.appendChild(l);}else at.append(a.displayName||'Google user');});media.appendChild(at);}
+      media.classList.remove('hidden');
+    }
+    info.setContent(content);
+  }catch(e){facts.textContent='店舗詳細は取得できませんでした';console.warn('Place detail failed',e);}
+}
+function jarvisRenderNearbyMarkers(){
+  jarvisClearNearbyMarkers(); if(!nearbyPlaces.length||!(window.google&&google.maps))return;
+  const render=(map,which)=>{
+    if(!map)return [];
+    return nearbyPlaces.map((item,index)=>{
+      const icon=jarvisNearbyIcon(item.label); const glyph=icon._glyph; delete icon._glyph;
+      const marker=new google.maps.Marker({map,position:{lat:item.lat,lng:item.lon},title:item.name,icon,label:{text:glyph,color:'#111827',fontSize:glyph.length>1?'9px':'11px',fontWeight:'800'},zIndex:20});
+      marker.addListener('click',()=>jarvisOpenNearbyInfo(which,index)); return marker;
+    });
+  };
+  navNearbyMarkers=render(navGoogleMap,'nav'); landNearbyMarkers=render(landGoogleMap,'land');
+  if(navGoogleMap&&typeof currentLat==='number'){
+    const bounds=new google.maps.LatLngBounds();bounds.extend({lat:currentLat,lng:currentLon});nearbyPlaces.forEach(x=>bounds.extend({lat:x.lat,lng:x.lon}));
+    navMapFollow=false;navMapUserMoved=true;navGoogleMap.fitBounds(bounds,64);jarvisUpdateRecenterButton();
+  }
+}
+function jarvisNearbyCategory(q){
+  const t=q.replace(/\s+/g,'');
+  const isNear=/(近く|近所|周辺|近辺|最寄り)/.test(t);
+  const defs=[
+    {re:/(コンビニ|コンビニエンス)/,type:'convenience_store',label:'コンビニ'},
+    {re:/(ガソリンスタンド|ガソリン|給油所|給油|サービスステーション|スタンド|\bGS\b)/i,type:'gas_station',label:'ガソリンスタンド'},
+    {re:/(トイレ|便所|公衆トイレ)/,type:'public_bathroom',label:'トイレ'},
+    {re:/(駐車場|パーキング)/,type:'parking',label:'駐車場'},
+    {re:/(スーパー|スーパーマーケット)/,type:'supermarket',label:'スーパー'},
+    {re:/(カフェ|喫茶店)/,type:'cafe',label:'カフェ'},
+    {re:/(レストラン|飲食店|ご飯|ごはん)/,type:'restaurant',label:'レストラン'}
+  ];
+  const hit=defs.find(d=>d.re.test(t));
+  return (hit && (isNear || t.length<=12)) ? hit : null;
+}
+async function jarvisSearchNearby(q,box){
+  const cat=jarvisNearbyCategory(q);
+  if(!cat) return false;
+  if(typeof currentLat!=='number'||typeof currentLon!=='number'){
+    jarvisSetStatus(`「近くの${cat.label}」は現在地が必要です。STARTでGPSを開始してください。`,'warn');
+    return true;
+  }
+  try{
+    const placesLib=await google.maps.importLibrary('places');
+    const PlaceClass=placesLib.Place || google.maps.places.Place;
+    const Rank=placesLib.SearchNearbyRankPreference || google.maps.places.SearchNearbyRankPreference;
+    if(!PlaceClass?.searchNearby) return false;
+    const request={
+      fields:['id','displayName','formattedAddress','location'],
+      locationRestriction:{center:{lat:currentLat,lng:currentLon},radius:5000},
+      includedPrimaryTypes:[cat.type],
+      maxResultCount:8,
+      rankPreference:Rank?.DISTANCE || 'DISTANCE',
+      language:'ja',
+      region:'jp'
+    };
+    const {places}=await PlaceClass.searchNearby(request);
+    if(!places?.length){jarvisSetStatus(`5km以内に${cat.label}が見つかりません。`,'warn');return true;}
+    nearbyPlaces=[];
+    jarvisSetStatus(`近い順に${places.length}件・地図にも表示`,'ok');
+    for(const place of places){
+      if(!place.location) continue;
+      const btn=document.createElement('button');btn.className='place-result';
+      btn.innerHTML='<strong></strong><span></span>';
+      const name=place.displayName || cat.label;
+      const loc=place.location;
+      const plat=typeof loc.lat==='function'?loc.lat():loc.lat;
+      const plng=typeof loc.lng==='function'?loc.lng():loc.lng;
+      const dist=haversine({latitude:currentLat,longitude:currentLon},{latitude:plat,longitude:plng});
+      btn.querySelector('strong').textContent=name;
+      btn.querySelector('span').textContent=`${dist<1000?Math.round(dist)+' m':(dist/1000).toFixed(1)+' km'} ・ ${place.formattedAddress||''}`;
+      const idx=nearbyPlaces.length;
+      nearbyPlaces.push({name,lat:plat,lon:plng,address:place.formattedAddress||'',distance:dist,label:cat.label,placeId:place.id||''});
+      btn.addEventListener('click',()=>{saveDestination({name,lat:plat,lon:plng});jarvisSetStatus(`目的地SET：${name}`,'ok');box.innerHTML='';updateNav();});
+      box.appendChild(btn);
+    }
+    jarvisRenderNearbyMarkers();
+    return true;
+  }catch(e){
+    console.warn('Nearby Search failed',e);
+    jarvisSetStatus('周辺検索エラー：'+(e?.message||e),'bad');
+    return true;
+  }
+}
+
+
+function jarvisBoundsAround(lat,lon,radiusKm){
+  const latDelta=radiusKm/111.32;
+  const lonScale=Math.max(0.2,Math.cos(lat*Math.PI/180));
+  const lonDelta=radiusKm/(111.32*lonScale);
+  return {south:lat-latDelta,west:lon-lonDelta,north:lat+latDelta,east:lon+lonDelta};
+}
+function jarvisNormalizePlaceText(s){
+  return String(s||'').normalize('NFKC').toLowerCase().replace(/[\s　・･\-‐‑‒–—―ー_（）()\[\]【】「」『』]/g,'');
+}
+function jarvisPlaceRelevance(q,name,address=''){
+  const nq=jarvisNormalizePlaceText(q), nn=jarvisNormalizePlaceText(name), na=jarvisNormalizePlaceText(address);
+  if(!nq) return 0;
+  if(nn===nq) return 1000;
+  if(nn.startsWith(nq)) return 850;
+  if(nn.includes(nq)) return 700;
+  if(na.includes(nq)) return 420;
+  // Google may return fuzzy matches; keep them as fallbacks but push them below literal matches.
+  return 0;
+}
+async function jarvisSearchTextNearest(q,box){
+  // v4.3: locationBias は「近くを優先」するだけで遠方候補を排除しない。
+  // そこで現在地周辺を locationRestriction で段階的に限定し、営業中/状態不明のみを距離順表示する。
+  if(typeof currentLat!=='number'||typeof currentLon!=='number') return false;
+  try{
+    const placesLib=await google.maps.importLibrary('places');
+    const PlaceClass=placesLib.Place || google.maps.places.Place;
+    const Rank=placesLib.SearchByTextRankPreference || google.maps.places.SearchByTextRankPreference;
+    if(!PlaceClass?.searchByText) return false;
+    let places=[]; let usedRadius=0;
+    for(const radiusKm of [8,20,50]){
+      const request={
+        fields:['displayName','formattedAddress','location','businessStatus'],
+        textQuery:q,
+        locationRestriction:jarvisBoundsAround(currentLat,currentLon,radiusKm),
+        rankPreference:Rank?.DISTANCE || 'DISTANCE',
+        maxResultCount:20,
+        language:'ja',
+        region:'jp'
+      };
+      const out=await PlaceClass.searchByText(request);
+      places=(out?.places||[]).filter(p=>String(p.businessStatus||'').toUpperCase()!=='CLOSED_PERMANENTLY');
+      if(places.length){usedRadius=radiusKm;break;}
+    }
+    if(!places.length) return false;
+    const items=[];
+    for(const place of places){
+      if(!place.location) continue;
+      const loc=place.location;
+      const lat=typeof loc.lat==='function'?loc.lat():loc.lat;
+      const lon=typeof loc.lng==='function'?loc.lng():loc.lng;
+      if(!Number.isFinite(lat)||!Number.isFinite(lon)) continue;
+      const distance=haversine({latitude:currentLat,longitude:currentLon},{latitude:lat,longitude:lon});
+      const name=place.displayName||q, address=place.formattedAddress||'';
+      const relevance=jarvisPlaceRelevance(q,name,address);
+      items.push({place,lat,lon,distance,name,address,relevance});
+    }
+    if(!items.length) return false;
+    items.sort((a,b)=>(b.relevance-a.relevance)||(a.distance-b.distance));
+    jarvisSetStatus(`入力一致を優先・現在地${usedRadius}km圏で${Math.min(items.length,8)}件`,'ok');
+    for(const item of items.slice(0,8)){
+      const btn=document.createElement('button');btn.className='place-result';
+      btn.innerHTML='<strong></strong><span></span>';
+      btn.querySelector('strong').textContent=item.name;
+      const d=item.distance<1000?`${Math.round(item.distance)}m`:`${(item.distance/1000).toFixed(1)}km`;
+      btn.querySelector('span').textContent=`${d} · ${item.address}`;
+      btn.addEventListener('click',()=>{
+        saveDestination({name:item.name,lat:item.lat,lon:item.lon});
+        jarvisSetStatus(`目的地SET：${item.name}`,'ok');
+        box.innerHTML='';
+        updateNav();
+      });
+      box.appendChild(btn);
+    }
+    return true;
+  }catch(e){
+    console.warn('Text Search nearest failed; fallback to autocomplete',e);
+    return false;
+  }
+}
+
+async function jarvisSetTypedDestination(){
+  const input=document.getElementById('placeInput');
+  const box=document.getElementById('placeResults');
+  const q=input?.value.trim();
+  if(!q || q.length<2){jarvisSetStatus('目的地名を2文字以上入力してください。','warn');return false;}
+  if(!jarvisGoogleReady){jarvisSetStatus('Google検索の準備待ちです。','warn');return false;}
