@@ -1,0 +1,200 @@
+  $('navMap3D')?.classList.add('hidden');
+  const id=jarvisMapViewId();
+  if(mapViewMode==='3D'){
+    try{navGoogleMap?.setMapTypeId?.('roadmap')}catch(e){}
+    try{landGoogleMap?.setMapTypeId?.('roadmap')}catch(e){}
+    jarvisApplyVector3D();
+  }else{
+    try{navGoogleMap?.setTilt?.(0);navGoogleMap?.setHeading?.(headingUpMode?(jarvisTravelHeading()||0):0)}catch(e){}
+    try{landGoogleMap?.setTilt?.(0);landGoogleMap?.setHeading?.(headingUpMode?(jarvisTravelHeading()||0):0)}catch(e){}
+    try{navGoogleMap?.setMapTypeId?.(id)}catch(e){}
+    try{landGoogleMap?.setMapTypeId?.(id)}catch(e){}
+  }
+  setTimeout(()=>{try{google.maps.event.trigger(navGoogleMap,'resize');jarvisSyncMaps(true)}catch(e){}},80);
+  jarvisUpdateMapViewButton();
+}
+function jarvisToggleMapView(){
+  mapViewMode=mapViewMode==='ROADMAP'?'SATELLITE':mapViewMode==='SATELLITE'?'HYBRID':mapViewMode==='HYBRID'?'3D':'ROADMAP';
+  localStorage.setItem('jarvisMapViewMode',mapViewMode);
+  jarvisApplyMapView();
+}
+function jarvisSyncTrafficLayers(){
+  const want=navMode==='ROUTE'&&!navSessionStarted;
+  try{
+    const TL=jarvisMapsLibrary?.TrafficLayer||google.maps?.TrafficLayer;
+    if(TL&&navGoogleMap){ if(!navTrafficLayer)navTrafficLayer=new TL(); navTrafficLayer.setMap(want?navGoogleMap:null); }
+    if(TL&&landGoogleMap){ if(!landTrafficLayer)landTrafficLayer=new TL(); landTrafficLayer.setMap(want?landGoogleMap:null); }
+  }catch(e){}
+}
+
+
+// ===== v6.12.1 continuous route-following display engine =====
+// 生GPSは速度・距離・逸脱判定用としてそのまま保持。
+// イカとナビカメラだけを選択ルート上へ投影し、requestAnimationFrameで連続移動させる。
+let jarvisMotion={
+  raf:null,
+  path:null,
+  pts:null,
+  cum:null,
+  total:0,
+  targetS:null,
+  displayS:null,
+  lastFixAt:0,
+  speedMps:0,
+  displayHeading:null,
+  lastFrameAt:0,
+  lastCameraAt:0,
+  lastProjection:null
+};
+// v6.14.24/27/28 diagnostics. `projectionS` is the single authoritative route-progress value
+// (always equal to jarvisMotion.targetS after the progress-corridor clamp in jarvisMotionAcceptFix).
+// `candidateS` is the raw pre-clamp pick from jarvisMotionProject's own corridor/fallback search and
+// is diagnostic-only: it can legitimately sit far from projectionS right after a reroute/rejoin and
+// must never be read as "the" vehicle progress. (A field literally named `selectedS` previously caused
+// exactly that confusion in simulator reports and has been removed.)
+let jarvisMotionDiag={
+  projectionS:null,
+  candidateS:null,
+  projectionDistance:null,
+  localCorridorUsed:null,
+  localCorridorDistance:null,
+  fallbackDistance:null,
+  mismatch:null,
+  departureCandidate:false,
+  departureFixes:0,
+  visualThreshold:null
+};
+let jarvisDepartureFixes=0;
+// FREE DRIVE: smooth raw GPS when ROUTE START is not active.
+let jarvisFreeMotion={raf:null,targetLat:null,targetLon:null,displayLat:null,displayLon:null,lastFixAt:0,speedMps:0,targetHeading:null,displayHeading:null,lastFrameAt:0,lastCameraAt:0,accuracy:99,acceptedLat:null,acceptedLon:null,acceptedAt:0,acceptedHeading:null,rawHistory:[],turnBlend:0,lastRawLat:null,lastRawLon:null,lastRawAt:0,renderSpeedMps:0};
+
+// v6.14.7 SAFE FREE TRACK: improve no-route tracking without changing route-navigation ownership.
+// The ROUTE motion engine remains exactly on the v6.14.1 control path.
+function jarvisFreeCorridorTargetSafe(lat,lng){
+  const f=jarvisFreeMotion;
+  if(!Number.isFinite(f.displayLat)||!Number.isFinite(f.displayLon)||!Number.isFinite(f.targetHeading)||f.speedMps<1.2)return{lat,lng};
+  const R=6371000,p=f.displayLat*Math.PI/180;
+  const east=(lng-f.displayLon)*Math.PI/180*R*Math.cos(p);
+  const north=(lat-f.displayLat)*Math.PI/180*R;
+  const h=f.targetHeading*Math.PI/180,ue=Math.sin(h),un=Math.cos(h);
+  const along=east*ue+north*un;
+  const cross=east*un-north*ue;
+  const acc=Number.isFinite(f.accuracy)?f.accuracy:99;
+  let keep=acc<=12?.35:acc<=20?.45:acc<=35?.58:.78;
+  // Never let the filter resist a real lane/road change.
+  if(Math.abs(cross)>14)keep=Math.max(keep,.82);
+  const e2=along*ue+(cross*keep)*un;
+  const n2=along*un-(cross*keep)*ue;
+  return{lat:f.displayLat+(n2/R)*180/Math.PI,lng:f.displayLon+(e2/(R*Math.cos(p)))*180/Math.PI};
+}
+function jarvisFreeAcceptFix(lat,lon,speedKmh,accuracyM){
+  if(!Number.isFinite(Number(lat))||!Number.isFinite(Number(lon)))return;
+  const f=jarvisFreeMotion,now=performance.now();
+  const rawLat=+lat,rawLon=+lon;
+  f.speedMps=Math.max(0,Math.min(45,(+speedKmh||0)/3.6));
+  f.accuracy=Number.isFinite(Number(accuracyM))?Number(accuracyM):99;
+
+  // v6.14.18: one GPS fix -> one estimator input. Keep a short raw history and infer
+  // the rider's trajectory from several fixes instead of trusting a single 2-3 m hop.
+  f.rawHistory.push({lat:rawLat,lng:rawLon,t:now,acc:f.accuracy});
+  while(f.rawHistory.length>7 || (f.rawHistory.length>2 && now-f.rawHistory[0].t>4200))f.rawHistory.shift();
+
+  let histHeading=null;
+  if(f.rawHistory.length>=3){
+    const newest=f.rawHistory[f.rawHistory.length-1];
+    let anchor=null;
+    for(let i=0;i<f.rawHistory.length-1;i++){
+      const q=f.rawHistory[i];
+      const d=haversine({latitude:q.lat,longitude:q.lng},{latitude:newest.lat,longitude:newest.lng});
+      const age=(newest.t-q.t)/1000;
+      if(age>=.7 && d>=Math.max(4.5,Math.min(9,(q.acc+newest.acc)*.18))){anchor=q;break;}
+    }
+    if(anchor)histHeading=bearing(anchor.lat,anchor.lng,newest.lat,newest.lng);
+  }
+  const globalHeading=jarvisTravelHeading();
+  let hd=Number.isFinite(histHeading)?histHeading:globalHeading;
+
+  // Estimate whether a genuine turn is developing. The blend ramps up over several fixes;
+  // unlike v6.14.16 we never fully open the lateral filter on one noisy heading sample.
+  let turnDelta=0;
+  if(Number.isFinite(hd)&&Number.isFinite(f.acceptedHeading))turnDelta=Math.abs(jarvisNorm180(hd-f.acceptedHeading));
+  const turnWanted=(f.speedMps>1.3 && turnDelta>16)?Math.min(1,(turnDelta-12)/42):0;
+  f.turnBlend += (turnWanted-f.turnBlend)*(turnWanted>f.turnBlend?.34:.18);
+  f.turnBlend=Math.max(0,Math.min(1,f.turnBlend));
+
+  let accepted={lat:rawLat,lng:rawLon};
+  if(Number.isFinite(f.acceptedLat)&&Number.isFinite(f.acceptedLon)){
+    const dt=Math.max(.18,Math.min(3,(now-(f.acceptedAt||now))/1000));
+    const prev={latitude:f.acceptedLat,longitude:f.acceptedLon};
+    const raw={latitude:rawLat,longitude:rawLon};
+    const rawDist=haversine(prev,raw);
+    const acc=Math.max(4,Math.min(55,f.accuracy));
+
+    // Hard anti-hop gate: allow physically plausible progress plus a modest accuracy budget.
+    // Excess displacement is consumed over multiple fixes instead of in one frame.
+    const plausible=Math.max(4.5,f.speedMps*dt*(1.35+.35*f.turnBlend)+Math.min(8.5,acc*.24));
+    const stepDist=Math.min(rawDist,plausible);
+    const rawBearing=rawDist>.5?bearing(f.acceptedLat,f.acceptedLon,rawLat,rawLon):hd;
+    if(rawDist>plausible&&Number.isFinite(rawBearing))
+      accepted=jarvisFreeForward(f.acceptedLat,f.acceptedLon,rawBearing,stepDist);
+
+    if(f.speedMps>1.1&&Number.isFinite(hd)){
+      const R=6371000,p=f.acceptedLat*Math.PI/180;
+      const east=(accepted.lng-f.acceptedLon)*Math.PI/180*R*Math.cos(p);
+      const north=(accepted.lat-f.acceptedLat)*Math.PI/180*R;
+      const h=hd*Math.PI/180,ue=Math.sin(h),un=Math.cos(h);
+      const along=east*ue+north*un,cross=east*un-north*ue;
+
+      // Straight: strongly suppress sideways jitter. During a real turn, relax only gradually.
+      const baseKeep=f.accuracy<=12?.24:f.accuracy<=22?.34:f.accuracy<=35?.48:.62;
+      let lateralKeep=baseKeep+(0.76-baseKeep)*f.turnBlend;
+      if(Math.abs(cross)>18)lateralKeep=Math.min(.82,lateralKeep+.10);
+      const e2=along*ue+(cross*lateralKeep)*un;
+      const n2=along*un-(cross*lateralKeep)*ue;
+      accepted={lat:f.acceptedLat+(n2/R)*180/Math.PI,lng:f.acceptedLon+(e2/(R*Math.cos(p)))*180/Math.PI};
+    }
+  }
+
+  f.acceptedLat=accepted.lat;f.acceptedLon=accepted.lng;f.acceptedAt=now;
+  if(Number.isFinite(hd)){
+    const hGain=.10+.12*f.turnBlend;
+    f.acceptedHeading=Number.isFinite(f.acceptedHeading)?smoothHeading(f.acceptedHeading,hd,hGain):hd;
+    f.targetHeading=Number.isFinite(f.targetHeading)?smoothHeading(f.targetHeading,hd,.12+.14*f.turnBlend):hd;
+  }
+  f.targetLat=accepted.lat;f.targetLon=accepted.lng;f.lastFixAt=now;
+  f.lastRawLat=rawLat;f.lastRawLon=rawLon;f.lastRawAt=now;
+  if(!Number.isFinite(f.displayLat)){f.displayLat=accepted.lat;f.displayLon=accepted.lng;f.displayHeading=Number.isFinite(hd)?hd:0;}
+  jarvisFreeMotionStart();
+}
+function jarvisFreeForward(lat,lon,hd,m){const R=6371000,b=hd*Math.PI/180,d=m/R,p=lat*Math.PI/180,l=lon*Math.PI/180,p2=Math.asin(Math.sin(p)*Math.cos(d)+Math.cos(p)*Math.sin(d)*Math.cos(b)),l2=l+Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(p),Math.cos(d)-Math.sin(p)*Math.sin(p2));return{lat:p2*180/Math.PI,lng:l2*180/Math.PI};}
+
+// ===== v6.14.45 VehiclePose ownership layer =====
+//
+// This formalizes an ownership boundary that already existed implicitly since v6.14.19's
+// "display-engine separation" (jarvisFreeMotion owns the vehicle marker/camera; jarvisMotion
+// owns route progress/guidance and must never write the marker) but had no explicit shape or
+// name — every consumer either reached into jarvisFreeMotion's fields directly or read
+// currentLat/currentLon ad hoc. VehiclePose is that shape, made explicit:
+//
+//   GPS measurement -> jarvisFreeMotion (independent estimator) -> VehiclePose -> vehicle ball + camera
+//                                                                -> route projection (jarvisMotion) -> progress/maneuver/reroute/arrival/guidance
+//
+// jarvisFreeMotion remains the actual estimator/smoother (reused, not replaced — see
+// jarvisFreeAcceptFix/jarvisFreeMotionStart above); VehiclePose is the canonical, named READ
+// interface onto its current output, and the only thing route projection is allowed to consume.
+// Route projection (jarvisMotionProject/jarvisMotionAcceptFix, below) must only ever READ a
+// VehiclePose; it must never write jarvisFreeMotion's fields. That invariant is exercised
+// directly by test/vehiclepose-ownership-tests.mjs (calls route-projection entry points in
+// isolation and asserts jarvisFreeMotion's display fields are bit-identical before/after).
+function jarvisBuildVehiclePose(lat,lng,heading,speedMps,timestampMs,extra){
+  return {
+    lat:Number(lat),lng:Number(lng),
+    heading:Number.isFinite(heading)?Number(heading):null,
+    speedMps:Number.isFinite(speedMps)?Math.max(0,Number(speedMps)):0,
+    timestampMs:Number.isFinite(timestampMs)?Number(timestampMs):null,
+    source:extra?.source||'GPS_FREE_MOTION',
+    confidence:Number.isFinite(extra?.confidence)?extra.confidence:null,
+    continuity:extra?.continuity||null
+  };
+}
+// Diagnostics: visible to tests/simulator so the road-matcher fallback state (§ below) isn't a
