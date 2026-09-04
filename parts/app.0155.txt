@@ -1,0 +1,200 @@
+    if(best<8)break;
+  }
+  return best;
+}
+
+// v6.14.28 REROUTE CORRIDOR: jarvisAutoRerouteUpdate() consumes this directly for OFF_ROUTE/
+// reroute evidence. The old single-pass distance+heading scorer could pick a less relevant
+// segment at a turn (the same failure mode jarvisMotionProject had before v6.14.27) and
+// generate false heading/lateral off-route evidence even while route-progress projection
+// remained essentially on-route. Select by geometry + progress continuity FIRST (heading-blind,
+// like the route-projection corridor); heading mismatch is computed only after the segment is
+// chosen and remains valid off-route evidence.
+let jarvisRerouteDiag={rerouteCorridorUsed:null,rerouteDistance:null,rerouteMismatch:null,rerouteS:null};
+function jarvisNearestActiveRoute(lat,lon){
+  if(!jarvisMotionPreparePath())return null;
+  const pts=jarvisMotion.pts,cum=jarvisMotion.cum;
+  const R=6371000,rad=Math.PI/180,lat0=lat*rad,cos=Math.max(.15,Math.cos(lat0));
+  const travel=jarvisTravelHeading();
+  const targetS=jarvisMotionDiag.projectionS,hasTarget=Number.isFinite(targetS);
+  let localBest=null,localBestScore=Infinity;
+  let globalBest=null,globalBestScore=Infinity;
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1],b=pts[i];
+    const ax=(a.lng-lon)*rad*cos*R,ay=(a.lat-lat)*rad*R;
+    const bx=(b.lng-lon)*rad*cos*R,by=(b.lat-lat)*rad*R;
+    const dx=bx-ax,dy=by-ay,den=dx*dx+dy*dy;
+    let u=den>0?-(ax*dx+ay*dy)/den:0;u=Math.max(0,Math.min(1,u));
+    const x=ax+u*dx,y=ay+u*dy,d=Math.hypot(x,y);
+    const segLen=Math.max(.01,cum[i]-cum[i-1]);
+    const s=cum[i-1]+segLen*u;
+    const segHeading=bearing(a.lat,a.lng,b.lat,b.lng);
+
+    if(d<=15&&(!hasTarget||(s>=targetS-25&&s<=targetS+120))){
+      const backPenalty=(hasTarget&&s<targetS-3)?(targetS-3-s)*3:0;
+      const tieBias=-s*1e-6;
+      const score=d+backPenalty+tieBias;
+      if(score<localBestScore){localBestScore=score;localBest={distance:d,segmentIndex:i-1,u,heading:segHeading,s};}
+    }
+
+    const mm=(Number.isFinite(travel)&&currentSpeedKmh>=4)?jarvisHeadingMismatch(travel,segHeading):0;
+    const headingPenalty=mm>120?90:mm>90?45:mm>60?15:0;
+    const gscore=d+headingPenalty;
+    if(gscore<globalBestScore){globalBestScore=gscore;globalBest={distance:d,segmentIndex:i-1,u,heading:segHeading,s};}
+  }
+  const chosen=localBest||globalBest;
+  if(!chosen)return null;
+  const mismatch=(Number.isFinite(travel)&&currentSpeedKmh>=4)?jarvisHeadingMismatch(travel,chosen.heading):0;
+  jarvisRerouteDiag.rerouteCorridorUsed=!!localBest;
+  jarvisRerouteDiag.rerouteDistance=chosen.distance;
+  jarvisRerouteDiag.rerouteMismatch=mismatch;
+  jarvisRerouteDiag.rerouteS=chosen.s;
+  return {distance:chosen.distance,segmentIndex:chosen.segmentIndex,u:chosen.u,heading:chosen.heading,mismatch};
+}
+
+function jarvisHeadingMismatch(a,b){
+  if(!Number.isFinite(a)||!Number.isFinite(b))return 0;
+  return Math.abs(((a-b+540)%360)-180);
+}
+
+function jarvisResetAutoRerouteWatch(){
+  autoRerouteOffRouteSince=0;
+  autoRerouteOffRouteFixes=0;
+  if(!jarvisDeviationEscape)jarvisDeviationEvidence=0;
+}
+
+function jarvisNormalizePathPoint(p){
+  if(!p)return null;
+  const lat=typeof p.lat==='function'?p.lat():Number(p.lat??p.latitude);
+  const lng=typeof p.lng==='function'?p.lng():Number(p.lng??p.longitude);
+  return Number.isFinite(lat)&&Number.isFinite(lng)?{lat,lng}:null;
+}
+function jarvisDestinationPoint(a,b,dMeters){
+  const brng=(b||0)*Math.PI/180, R=6371000;
+  const lat1=a.lat*Math.PI/180, lon1=a.lng*Math.PI/180, dr=dMeters/R;
+  const lat2=Math.asin(Math.sin(lat1)*Math.cos(dr)+Math.cos(lat1)*Math.sin(dr)*Math.cos(brng));
+  const lon2=lon1+Math.atan2(Math.sin(brng)*Math.sin(dr)*Math.cos(lat1),Math.cos(dr)-Math.sin(lat1)*Math.sin(lat2));
+  return {lat:lat2*180/Math.PI,lng:lon2*180/Math.PI};
+}
+function jarvisActiveViaPoints(){
+  return routeViaPoints.filter(p=>!p.visited);
+}
+function jarvisUpdateViaVisited(lat,lon){
+  let changed=false;
+  for(const p of routeViaPoints){
+    if(p.visited)continue;
+    const d=haversine({latitude:lat,longitude:lon},{latitude:p.lat,longitude:p.lng});
+    if(d<=120){p.visited=true;changed=true}
+  }
+  if(changed){
+    jarvisRenderViaMarkers();
+    localStorage.setItem('jarvisRouteViaPoints',JSON.stringify(routeViaPoints));
+  }
+}
+function jarvisRenderViaMarkers(){
+  routeViaMarkers.forEach(m=>{try{m.setMap(null)}catch(e){}}); routeViaMarkers=[];
+  if(!navGoogleMap||!routeViaPoints.length)return;
+  routeViaPoints.forEach((p,i)=>{
+    const m=new google.maps.Marker({
+      map:navGoogleMap,
+      position:{lat:p.lat,lng:p.lng},
+      title:p.visited?`経由${i+1} 通過済み`:`経由${i+1}（タップで削除）`,
+      label:{text:String(i+1),color:'#ffffff',fontWeight:'700'},
+      opacity:p.visited?.45:1,
+      zIndex:30
+    });
+    m.addListener('click',()=>{
+      if(navSessionStarted)return;
+      routeViaPoints.splice(i,1);
+      localStorage.setItem('jarvisRouteViaPoints',JSON.stringify(routeViaPoints));
+      jarvisRenderViaMarkers();
+      jarvisSetStatus('経由地を削除しました。ルートを再計算中…','ok');
+      jarvisComputeRoute(true);
+    });
+    routeViaMarkers.push(m);
+  });
+}
+function jarvisSetDestinationFromLongPress(latLng){
+  const lat=typeof latLng?.lat==='function'?latLng.lat():Number(latLng?.lat),lng=typeof latLng?.lng==='function'?latLng.lng():Number(latLng?.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+  destination={lat,lon:lng,name:'地図で指定した地点'};
+  jarvisBlurTextInputs();
+  routeViaPoints=[];localStorage.setItem('jarvisRouteViaPoints','[]');
+  jarvisRenderViaMarkers();
+  jarvisSetStatus('長押し地点を目的地に設定。ルートを計算中…','ok');
+  jarvisComputeRoute(true);
+}
+function jarvisLongPressAction(ll){if(navSessionStarted)return;if(destination)jarvisAddViaPoint(ll);else jarvisSetDestinationFromLongPress(ll);}
+
+function jarvisAddViaPoint(latLng){
+  if(navSessionStarted){
+    jarvisSetStatus('経由地の追加は停車してルート選択中に行ってください','warn'); return;
+  }
+  if(!destination){
+    jarvisSetStatus('先に目的地を設定してください','warn'); return;
+  }
+  const lat=typeof latLng?.lat==='function'?latLng.lat():Number(latLng?.lat);
+  const lng=typeof latLng?.lng==='function'?latLng.lng():Number(latLng?.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+  if(routeViaPoints.length>=3){
+    jarvisSetStatus('経由地は試験版では3か所までです','warn'); return;
+  }
+  routeViaPoints.push({lat,lng,visited:false});
+  localStorage.setItem('jarvisRouteViaPoints',JSON.stringify(routeViaPoints));
+  jarvisRenderViaMarkers();
+  jarvisSetStatus(`経由地${routeViaPoints.length}を追加。この道を通るルートを計算中…`,'ok');
+  jarvisComputeRoute(true);
+}
+function jarvisBindMapLongPress(){
+  if(!navGoogleMap||navGoogleMap.__jarvisLongPressBound)return;
+  navGoogleMap.__jarvisLongPressBound=true;
+  // Google Maps JS has a native long-press event path that works more reliably on iPhone
+  // than synthesizing it from mouse events. Keep the mouse fallback for desktop testing.
+  let firedAt=0;
+  const fire=(ll)=>{
+    if(!ll||navSessionStarted)return;
+    const now=Date.now();
+    if(now-firedAt<900)return;
+    firedAt=now;
+    if(navigator.vibrate)try{navigator.vibrate(35)}catch(e){}
+    jarvisLongPressAction(ll);
+  };
+  navGoogleMap.addListener('longpress',e=>fire(e?.latLng));
+
+  const cancel=()=>{
+    if(jarvisLongPressTimer){clearTimeout(jarvisLongPressTimer);jarvisLongPressTimer=null}
+    jarvisLongPressLatLng=null;
+  };
+  navGoogleMap.addListener('mousedown',e=>{
+    cancel();
+    if(navSessionStarted)return;
+    jarvisLongPressLatLng=e?.latLng||null;
+    if(!jarvisLongPressLatLng)return;
+    jarvisLongPressTimer=setTimeout(()=>{
+      const ll=jarvisLongPressLatLng;
+      jarvisLongPressTimer=null;jarvisLongPressLatLng=null;
+      fire(ll);
+    },650);
+  });
+  navGoogleMap.addListener('mouseup',cancel);
+  navGoogleMap.addListener('dragstart',cancel);
+}
+function jarvisFindRejoinWaypoint(){
+  const path=jarvisOriginalRoutePath.map(jarvisNormalizePathPoint).filter(Boolean);
+  if(path.length<2||typeof currentLat!=='number'||typeof currentLon!=='number')return null;
+  let bestI=0,bestD=Infinity;
+  for(let i=0;i<path.length;i++){
+    const d=haversine({latitude:currentLat,longitude:currentLon},{latitude:path[i].lat,longitude:path[i].lng});
+    if(d<bestD){bestD=d;bestI=i}
+  }
+  let acc=0;
+  for(let i=bestI+1;i<path.length;i++){
+    acc+=haversine({latitude:path[i-1].lat,longitude:path[i-1].lng},{latitude:path[i].lat,longitude:path[i].lng});
+    if(acc>=350)return path[i];
+  }
+  return path[Math.min(path.length-1,bestI+1)]||null;
+}
+function jarvisRequestIntermediates(strategy='NORMAL'){
+  // v6.14: never invent a forward waypoint for reroute. On divided roads that point can
+  // snap to the opposite carriageway/ramp and produce absurd U-turn routes.
+  // Keep only user-declared via points (and legacy REJOIN only for explicit/manual use).
