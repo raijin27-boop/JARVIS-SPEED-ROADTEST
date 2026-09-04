@@ -1,0 +1,200 @@
+    jarvisSetStatus('新しいAPIキーを入力してください。');
+    alert('保存済みキーを削除しました。新しいキーを入力して保存してください。');
+  });
+
+  document.getElementById('placeInput')?.addEventListener('input',()=>{
+    clearTimeout(jarvisDebounce);
+    jarvisDebounce=setTimeout(jarvisSearchPlaces,350);
+  });
+  document.getElementById('placeInput')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){e.preventDefault();clearTimeout(jarvisDebounce);jarvisSetTypedDestination();}
+  });
+  document.getElementById('setTypedDestBtn')?.addEventListener('click',()=>{
+    clearTimeout(jarvisDebounce);
+    jarvisSetTypedDestination();
+  });
+  document.getElementById('clearSearchBtn')?.addEventListener('click',()=>{
+    document.getElementById('placeInput').value='';
+    document.getElementById('placeResults').innerHTML='';
+    jarvisSetStatus(jarvisGoogleReady?'Google検索 準備OK':'APIキーを保存するとGoogle検索を開始できます。');
+  });
+}
+
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',jarvisBootV2);
+else jarvisBootV2();
+
+
+// ===== v2.2 clock + weather (Open-Meteo, no API key) =====
+let jarvisWeatherLastAt=0, jarvisWeatherLastLat=null, jarvisWeatherLastLon=null;
+function jarvisUpdateClock(){
+  const now=new Date();
+  const t=document.getElementById('navClock'),d=document.getElementById('navDate');
+  const ts=now.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',hour12:false}); if(t) t.textContent=ts; setTextIf('landClock',ts);
+  if(d) d.textContent=now.toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'});
+}
+function jarvisWeatherLabel(code,isDay=1){
+  if(code===0) return [isDay?'☀️':'🌙','快晴'];
+  if(code===1) return [isDay?'🌤️':'🌙','晴れ'];
+  if(code===2) return ['⛅','くもり時々晴れ'];
+  if(code===3) return ['☁️','くもり'];
+  if([45,48].includes(code)) return ['🌫️','霧'];
+  if([51,53,55,56,57].includes(code)) return ['🌦️','霧雨'];
+  if([61,63,65,66,67,80,81,82].includes(code)) return ['🌧️','雨'];
+  if([71,73,75,77,85,86].includes(code)) return ['🌨️','雪'];
+  if([95,96,99].includes(code)) return ['⛈️','雷雨'];
+  return ['🌡️','天気'];
+}
+async function jarvisUpdateWeather(force=false){
+  if(typeof currentLat!=='number'||typeof currentLon!=='number') return;
+  const moved = jarvisWeatherLastLat===null ? 999 : haversine({latitude:jarvisWeatherLastLat,longitude:jarvisWeatherLastLon},{latitude:currentLat,longitude:currentLon});
+  if(!force && Date.now()-jarvisWeatherLastAt<15*60*1000 && moved<10000) return;
+  try{
+    const url='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(currentLat)+'&longitude='+encodeURIComponent(currentLon)+'&current=temperature_2m,weather_code,is_day&hourly=precipitation_probability&forecast_days=1&timezone=auto';
+    const r=await fetch(url,{headers:{Accept:'application/json'}}); if(!r.ok) throw new Error(String(r.status));
+    const j=await r.json(), cur=j.current||{};
+    const newIsDay=Number(cur.is_day)===1;
+    if(autoIsDay!==newIsDay){
+      const before=jarvisEffectiveTheme(); autoIsDay=newIsDay; const after=jarvisEffectiveTheme();
+      if(mapThemeMode==='AUTO'&&before!==after&&jarvisMapsReady) jarvisRebuildMaps();
+    }else autoIsDay=newIsDay;
+    const temp=document.getElementById('navTemp'),icon=document.getElementById('navWeatherIcon'),text=document.getElementById('navWeatherText'),rain=document.getElementById('navRain');
+    if(temp && Number.isFinite(cur.temperature_2m)) temp.textContent=Math.round(cur.temperature_2m); if(Number.isFinite(cur.temperature_2m)) setTextIf('landTemp',Math.round(cur.temperature_2m));
+    const pair=jarvisWeatherLabel(Number(cur.weather_code),Number(cur.is_day)); if(icon) icon.textContent=pair[0]; if(text) text.textContent=pair[1]; setTextIf('landWeatherIcon',pair[0]); setTextIf('landWeatherText',pair[1]);
+    let pp=null;
+    if(j.hourly?.time?.length && j.hourly?.precipitation_probability?.length){
+      const now=Date.now(); let best=0,bestDiff=Infinity;
+      j.hourly.time.forEach((x,i)=>{const diff=Math.abs(new Date(x).getTime()-now); if(diff<bestDiff){bestDiff=diff;best=i}});
+      pp=j.hourly.precipitation_probability[best];
+    }
+    const rainText='降水 '+(Number.isFinite(pp)?Math.round(pp):'--')+'%'; if(rain) rain.textContent=rainText; setTextIf('landRain',rainText);
+    jarvisWeatherLastAt=Date.now();jarvisWeatherLastLat=currentLat;jarvisWeatherLastLon=currentLon;
+  }catch(e){ const text=document.getElementById('navWeatherText'); if(text) text.textContent='天気取得待ち'; setTextIf('landWeatherText','天気取得待ち'); }
+}
+jarvisUpdateClock();setInterval(jarvisUpdateClock,1000);
+
+
+window.addEventListener('orientationchange',()=>setTimeout(jarvisResizeMaps,350));
+window.addEventListener('resize',()=>setTimeout(jarvisResizeMaps,120));
+document.getElementById('navTab')?.addEventListener('click',()=>setTimeout(jarvisResizeMaps,80));
+
+
+
+// ===== v5.6 speed-meter bottom sheet =====
+(function(){
+  let sheet=null,handle=null,meter=null,startY=0,startOffset=0,currentOffset=0,dragging=false,lastTapSuppressed=false;
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function collapsedVisible(){
+    // v5.6: collapsed state shows only the speed/weather card (+ grabber), never the mode/search rows.
+    if(meter){
+      const mh=Math.ceil(meter.getBoundingClientRect().height);
+      return Math.min(212,Math.max(124,mh));
+    }
+    return window.matchMedia('(max-width:390px)').matches?138:142;
+  }
+  function offsets(){
+    if(!sheet)return {collapsed:0,half:0,expanded:0};
+    const h=sheet.getBoundingClientRect().height;
+    const vh=window.innerHeight||document.documentElement.clientHeight;
+    const cv=Math.min(h,collapsedVisible());
+    const halfVisible=Math.min(h,Math.max(330,Math.round(vh*.52)));
+    return {collapsed:Math.max(0,h-cv),half:Math.max(0,h-halfVisible),expanded:0};
+  }
+  function updateVisible(offset){
+    if(!sheet)return;
+    const h=sheet.getBoundingClientRect().height;
+    const visible=clamp(h-offset,0,h);
+    document.body.style.setProperty('--sheet-visible',Math.round(visible)+'px');
+  }
+  function applyOffset(offset,animate=true){
+    if(!sheet)return;
+    currentOffset=clamp(offset,0,sheet.getBoundingClientRect().height);
+    sheet.classList.toggle('dragging',!animate);
+    sheet.style.transform='translateY('+currentOffset+'px)';
+    updateVisible(currentOffset);
+  }
+  function setState(state,animate=true){
+    if(!sheet)return;
+    const o=offsets(); if(!(state in o))state='collapsed';
+    sheet.dataset.state=state; applyOffset(o[state],animate);
+    if(state==='collapsed')sheet.scrollTop=0;
+  }
+  function nearestState(offset,velocity=0){
+    const o=offsets();
+    if(velocity<-0.45)return offset<=o.half?'expanded':'half';
+    if(velocity>0.45)return offset>=o.half?'collapsed':'half';
+    return Object.keys(o).sort((a,b)=>Math.abs(offset-o[a])-Math.abs(offset-o[b]))[0];
+  }
+  function bindDragSurface(el){
+    if(!el)return;
+    let lastY=0,lastT=0,velocity=0;
+    el.addEventListener('pointerdown',e=>{
+      if(!document.body.classList.contains('nav-mode'))return;
+      dragging=true;lastTapSuppressed=false;startY=e.clientY;startOffset=currentOffset;lastY=e.clientY;lastT=performance.now();velocity=0;
+      el.setPointerCapture?.(e.pointerId);sheet.classList.add('dragging');e.preventDefault();
+    });
+    el.addEventListener('pointermove',e=>{
+      if(!dragging)return;const now=performance.now(),dt=Math.max(1,now-lastT);velocity=(e.clientY-lastY)/dt;lastY=e.clientY;lastT=now;
+      if(Math.abs(e.clientY-startY)>6)lastTapSuppressed=true;
+      applyOffset(startOffset+(e.clientY-startY),false);e.preventDefault();
+    });
+    const finish=()=>{if(!dragging)return;dragging=false;sheet.classList.remove('dragging');setState(nearestState(currentOffset,velocity),true);};
+    el.addEventListener('pointerup',finish);el.addEventListener('pointercancel',finish);
+  }
+  function init(){
+    sheet=document.getElementById('navBottomSheet');handle=document.getElementById('navSheetHandle');meter=document.querySelector('#navPanel .map-info-strip');
+    if(!sheet||!handle||!meter)return;
+    // Move the existing speed/weather frame into the top of the sheet.
+    sheet.insertBefore(meter,handle.nextSibling);
+    bindDragSurface(handle);bindDragSurface(meter);
+    handle.addEventListener('click',()=>{if(lastTapSuppressed)return;const st=sheet.dataset.state||'collapsed';setState(st==='collapsed'?'half':st==='half'?'expanded':'collapsed');});
+    handle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();handle.click();}});
+    meter.addEventListener('dblclick',()=>{const st=sheet.dataset.state||'collapsed';setState(st==='collapsed'?'half':'collapsed');});
+    document.getElementById('placeInput')?.addEventListener('focus',()=>setState('expanded',true));
+    document.getElementById('clearDestBtn')?.addEventListener('click',()=>setState('half',true));
+    document.getElementById('mapStartBtn')?.addEventListener('click',()=>setTimeout(()=>setState('collapsed',true),80));
+    window.addEventListener('resize',()=>setTimeout(()=>setState(sheet.dataset.state||'collapsed',false),120));
+    window.jarvisSheetSetState=setState;
+    requestAnimationFrame(()=>setState('collapsed',false));
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+
+
+function jarvisApplyVector3D(){
+  const navMap=navGoogleMap;
+  if(!navMap)return;
+  try{
+    const h=(headingUpMode?(jarvisTravelHeading()||0):0);
+    navMap.setMapTypeId('roadmap');
+    if(typeof navMap.setTilt==='function') navMap.setTilt(navSessionStarted?55:45);
+    if(typeof navMap.setHeading==='function') navMap.setHeading(h);
+    if(navSessionStarted){
+      navMap.setZoom(19);
+      if(Number.isFinite(currentLat)&&Number.isFinite(currentLon)){
+        navMap.panTo({lat:currentLat,lng:currentLon});
+      }
+    }else{
+      if((navMap.getZoom?.()||0)<18) navMap.setZoom(18);
+    }
+    setTextIf('map3dStatus','VECTOR 3D / '+(navSessionStarted?'走行追従':'閲覧')+' / '+(headingUpMode?'進行↑':'北↑'));
+  }catch(e){
+    setTextIf('map3dStatus','VECTOR 3D ERROR '+(e?.message||e));
+  }
+}
+
+
+function jarvisResetVector3D(){
+  if(!navMap)return;
+  try{
+    if(typeof navMap.setTilt==='function') navMap.setTilt(0);
+    if(typeof navMap.setHeading==='function') navMap.setHeading(headingUpMode?(jarvisTravelHeading()||0):0);
+  }catch(_){}
+}
+
+
+document.addEventListener('click',e=>{
+  try{
+    const b=e.target?.closest?.('button,[role="button"]');
+    if(!b)return;
+    const t=(b.textContent||'').trim().toUpperCase();
+    if(t==='SET'||t==='START'||t.includes('START')) jarvisBlurTextInputs();
