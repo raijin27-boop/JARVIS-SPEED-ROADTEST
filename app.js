@@ -2074,7 +2074,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.57-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.58-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
