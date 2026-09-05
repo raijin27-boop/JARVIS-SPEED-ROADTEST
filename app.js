@@ -96,6 +96,7 @@ let jarvisOriginalRouteRejoinFixes=0;
 // a route changes WHILE already navigating. Distinct from "routeLastAt is recent", which is also
 // true for the very first route computed at START and is not evidence of a just-resolved deviation.
 let jarvisRouteSettleUntil=0;
+let jarvisRerouteSeedPending=false; // v6.14.75 seed new reroute progress from live GPS
 let jarvisLastMovingHeading=null;     // 現在の走行方向を再検索の意図に使う
 let routeViaPoints=[];                // 地図長押しで作るユーザー指定経由点
 let routeViaMarkers=[];
@@ -934,6 +935,19 @@ function jarvisMotionPreparePath(){
   jarvisMotion.targetS=null;
   jarvisMotion.displayS=null;
   jarvisMotion.lastProjection=null;
+  // v6.14.75 REROUTE HANDOFF: a newly committed reroute must not visually restart at S=0.
+  // Once the new path exists, project the latest RAW GPS onto it and seed both route-progress
+  // values there. This is reroute-only; normal START initialization is unchanged.
+  if(jarvisRerouteSeedPending&&Number.isFinite(currentLat)&&Number.isFinite(currentLon)){
+    jarvisRerouteSeedPending=false;
+    const seed=jarvisMotionProject(currentLat,currentLon,Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:15);
+    if(seed&&Number.isFinite(seed.s)){
+      const seedS=Math.max(0,Math.min(jarvisMotion.total,seed.s));
+      jarvisMotion.targetS=seedS;
+      jarvisMotion.displayS=seedS;
+      jarvisMotion.lastProjection={s:seedS,distance:Number(seed.distance)||0};
+    }
+  }
   return true;
 }
 
@@ -2101,7 +2115,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.74-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.75-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3440,6 +3454,7 @@ function jarvisCommitRoute(candidates,selectedIndex,meta={}){
   // jarvisAutoRerouteUpdate. The very first route computed before/at START never gets this: there
   // is no prior deviation to settle from, and routeLastAt being "recent" then is not evidence of one.
   if(reason==='REROUTE'||reason==='ORIGINAL_ROUTE_REJOIN')jarvisRouteSettleUntil=routeLastAt+AUTO_REROUTE_SETTLE_MS;
+  if(reason==='REROUTE')jarvisRerouteSeedPending=true;
   jarvisRoadTestNoteLifecycle('ROUTE_COMMITTED',{reason,generation:routeRequestSeq,candidateCount:candidates.length});
   return routeData;
 }
@@ -3594,11 +3609,14 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
   // v6.14.67 REROUTE: stronger real-deviation response without returning to one-fix triggers.
   // Good GPS may react sooner; weak GPS keeps a wider corridor. A missed turn can be confirmed
   // from strong heading disagreement before lateral distance grows to the old 55-72m threshold.
-  const threshold=settling?Math.max(58,AUTO_REROUTE_DISTANCE_M):Math.max(42,Math.min(60,34+acc*1.05));
-  const headingWrong=speed>=8&&lateral>14&&mismatch>78;
-  const decisiveHeading=acc<=25&&speed>=10&&lateral>9&&mismatch>108;
+  // v6.14.75 EARLIER REROUTE: good GPS + sustained directional disagreement may begin
+  // departure confirmation before lateral error grows to 70-80m. Weak/slow GPS keeps the
+  // existing wider corridor; this is deliberately not a one-fix distance trigger.
+  const threshold=settling?Math.max(58,AUTO_REROUTE_DISTANCE_M):Math.max(36,Math.min(54,29+acc*.88));
+  const headingWrong=speed>=8&&lateral>12&&mismatch>72;
+  const decisiveHeading=acc<=22&&speed>=10&&lateral>8&&mismatch>102;
   const clearlyFar=lateral>threshold;
-  const hardFar=lateral>Math.max(75,threshold+16);
+  const hardFar=lateral>Math.max(66,threshold+14);
 
   if(clearlyFar||headingWrong||decisiveHeading){
     if(!autoRerouteOffRouteSince)autoRerouteOffRouteSince=Date.now();
