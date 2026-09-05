@@ -1376,19 +1376,19 @@ function jarvisRenderPreviewTurnArrows(){
 function jarvisClearTurnArrow(){try{jarvisTurnArrowLine?.setMap?.(null)}catch(e){}jarvisTurnArrowLine=null;}
 function jarvisTurnArrowWindow(turn){
   if(!turn)return null;
-  const kind=turn.kind||'TURN',deg=Math.abs(Number(turn.turnDeg)||0);
-  // The white line is an explanation of the maneuver, not a fixed-distance overlay.
-  // Keep/merge-like actions need no painted path; exits/forks need enough branch geometry
-  // to make the split obvious; normal intersections stay compact.
-  if(kind==='MERGE'||/KEEP/.test(String(turn.maneuver||'')))return null;
-  if(kind==='EXIT'||kind==='DIVERGE'){
-    const before=deg<18?12:16,after=deg<18?32:24;
-    return{startS:Math.max(0,turn.startS-before),endS:Math.min(jarvisMotion.total,turn.endS+after),maxDistance:145,branch:true};
-  }
-  const sharp=deg>=70,shallow=deg<38;
-  const before=sharp?14:(shallow?8:11);
-  const after=sharp?18:(shallow?10:14);
-  return{startS:Math.max(0,turn.startS-before),endS:Math.min(jarvisMotion.total,turn.endS+after),maxDistance:105,branch:false};
+  const kind=turn.kind||'TURN';
+  // v6.14.60: Tony road-preview tuning.
+  // Every visible maneuver line is now roughly half the previous visual span and is anchored
+  // around the maneuver point at a 2:1 ratio: two thirds BEFORE the maneuver, one third AFTER.
+  // MERGE is intentionally painted too; the previous explicit MERGE suppression hid the
+  // Hannan-road merge Tony identified during preview review.
+  if(/KEEP/.test(String(turn.maneuver||'')))return null;
+  const branch=(kind==='EXIT'||kind==='DIVERGE'||kind==='MERGE');
+  const total=branch?26:19;
+  const before=total*(2/3),after=total*(1/3);
+  const anchor=Number.isFinite(Number(turn.s))?Number(turn.s):((Number(turn.startS)+Number(turn.endS))/2);
+  if(!Number.isFinite(anchor))return null;
+  return{startS:Math.max(0,anchor-before),endS:Math.min(jarvisMotion.total,anchor+after),maxDistance:branch?145:105,branch};
 }
 function jarvisUpdateTurnArrow(turn){
  if(!navGoogleMap||jarvisDeviationEscape||jarvisNavTrackingState==='REROUTING'){jarvisClearTurnArrow();return;}
@@ -2100,7 +2100,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.59-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.60-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
