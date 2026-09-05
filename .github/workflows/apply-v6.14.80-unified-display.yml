@@ -1,0 +1,34 @@
+name: Apply v6.14.80 UNIFIED DISPLAY
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-v6.14.80-unified-display.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Apply patch
+        run: python3 tools/apply-v61480-unified-display.py
+      - name: Syntax and architecture gates
+        run: |
+          set -euo pipefail
+          node --check app.js
+          grep -Fq 'v6.14.80 UNIFIED DISPLAY ARCHITECTURE' app.js
+          grep -Fq 'jarvisDisplayRouteWeight' app.js
+          grep -Fq 'const renderRouteLocked=false' app.js
+          grep -Fq 'wanted<jarvisDisplayRouteWeight ? .58 : .20' app.js
+          grep -Fq 'app.js?v=v6.14.80-0350' index.html
+          grep -Fq 'window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.80-ROADTEST-20260906T0350JST"' index.html
+      - name: Commit runtime
+        run: |
+          git config user.name jarvis-speed-bot
+          git config user.email actions@users.noreply.github.com
+          git add app.js index.html
+          git commit -m 'refactor: unify marker display and route affinity v6.14.80'
+          git push origin HEAD:main
