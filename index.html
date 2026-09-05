@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0a0d12" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="JARVIS GPS" />
+<title>JARVIS Road Test v6.14.57-ROADTEST-20260904T222603Z</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="brand">JARVIS GPS SPEED <span class="ver">v6.14.44</span></div>
+    <div id="status" class="status">待機中</div>
+  </div>
+
+  <section id="speedPanel">
+    <section class="hero">
+      <div class="label">CURRENT SPEED</div>
+      <div id="speed" class="speed">0</div>
+      <div class="unit">km/h</div>
+      <div id="accuracy" class="accuracy">GPS精度 -- m</div>
+      <div id="wakeState" class="wake">画面保持 --</div>
+    </section>
+
+    <div class="grid">
+      <div class="card"><div class="k">最高速度</div><div><span id="maxSpeed" class="v">0</span><span class="s">km/h</span></div></div>
+      <div class="card"><div class="k">平均速度</div><div><span id="avgSpeed" class="v">0</span><span class="s">km/h</span></div></div>
+      <div class="card"><div class="k">走行距離</div><div><span id="distance" class="v">0.00</span><span class="s">km</span></div></div>
+      <div class="card"><div class="k">走行時間</div><div><span id="elapsed" class="v">00:00</span></div></div>
+    </div>
+    <div class="tabs speed-mode-tabs">
+      <button class="tab active" type="button">SPEED</button>
+      <button id="speedToNavBtn" class="tab" type="button">NAV</button>
+    </div>
+  </section>
+
+  <section id="navPanel" class="hidden">
+    <section class="nav-hero">
+      <div class="nav-map-shell">
+        <div id="navMap" class="jarvis-map" aria-label="Googleマップ ナビ表示"></div>
+        <div id="navMap3D" class="jarvis-map jarvis-map-3d hidden" aria-label="Google 3Dマップ ナビ表示"></div>
+        <div class="map-compass"><span>北</span><span>東</span><span>南</span><span>西</span></div>
+        <div class="nav-map-top">
+          <span id="navName" class="nav-name nav-name-hidden">目的地未設定</span>
+          <div class="route-summary"><span id="navDistance" class="nav-distance">-- km</span><span class="route-summary-dot">·</span><span id="routeEta" class="route-eta">-- 分 / --:--</span></div>
+        </div>
+        <div class="map-control-stack">
+          <button id="headingModeBtn" class="heading-mode-btn" type="button" aria-label="地図の向きを切替">北↑</button>
+          <button id="themeModeBtn" class="heading-mode-btn theme-mode-btn" type="button" aria-label="地図の明暗を切替">AUTO</button>
+          <button id="mapViewBtn" class="heading-mode-btn map-view-btn" type="button" aria-label="地図表示を切替">地図</button>
+          <div class="voice-volume-wrap">
+            <button id="voiceGuideBtn" class="heading-mode-btn voice-guide-btn active" type="button" aria-label="音声音量を調整">🔊</button>
+            <div id="voiceVolumePopup" class="voice-volume-popup hidden" role="dialog" aria-label="音声音量">
+              <input id="mapVoiceVolume" type="range" min="0" max="100" step="1" value="100" aria-label="音声音量">
+              <span id="mapVoiceVolumeValue">100%</span>
+            </div>
+          </div>
+          <button id="recenterBtn" class="recenter-btn" type="button" aria-label="現在地へ戻る">◎</button>
+        </div>
+        <div id="navMapState" class="map-state">Googleマップ準備中</div>
+        <div id="viaHint" class="via-hint">地図長押し：この道を経由</div>
+        <div id="navMapDiag" class="map-diag">地図方式 / 方位 / heading 診断待ち</div>
+        <button id="mapStartBtn" class="map-start-btn hidden" type="button"><span class="map-action-main">▶ START</span><span class="map-action-sub">--分 · -- km</span></button>
+        <section class="nav-info-strip map-info-strip" aria-label="走行情報">
+          <div class="nav-info-card speed-card"><div class="k">速度</div><div><span id="navSpeed" class="nv">0</span><span class="nu">km/h</span></div></div>
+          <div class="nav-info-card clock-temp-card">
+            <div class="clock-half"><span id="navClock" class="nv clock">--:--</span><span id="navDate" class="tiny">--</span></div>
+            <div class="temp-half"><span id="navTemp">--</span><span class="temp-unit">°C</span></div>
+          </div>
+          <div class="nav-info-card weather-card"><div class="k">天気</div><div class="weather-line"><span id="navWeatherIcon" class="weather-icon">--</span><span id="navWeatherText" class="tiny">GPS待機中</span></div><div id="navRain" class="rain">降水 --%</div></div>
+        </section>
+      </div>
+    </section>
+
+    <div id="navBottomSheet" class="nav-bottom-sheet" data-state="collapsed" aria-label="ナビ操作パネル">
+      <div id="navSheetHandle" class="nav-sheet-handle" role="button" tabindex="0" aria-label="操作パネルを開閉">
+        <span class="nav-sheet-grabber"></span>
+      </div>
+    <div class="nav-mode-switch" aria-label="ナビ方式"><button id="adventureModeBtn" type="button">🦑 ADVENTURE</button><button id="routeModeBtn" type="button">🗺️ ROUTE</button></div>
+
+    <div class="tabs mode-tabs">
+      <button id="speedTab" class="tab">SPEED</button>
+      <button id="navTab" class="tab active">NAV</button>
+    </div>
+
+    <section class="nav-set">
+      <h2>Google目的地検索</h2>
+
+      <div id="keySetup" class="key-setup">
+        <div class="field-label">初回のみ：Google Maps APIキー</div>
+        <div class="search-row">
+          <input id="apiKeyInput" type="password" autocomplete="off" autocapitalize="off"
+                 placeholder="APIキーをこのiPhoneに保存">
+          <button id="saveKeyBtn" class="primary">保存</button>
+        </div>
+        <div class="search-status">
+          キーはこの端末のlocalStorageにだけ保存します。チャットへ送信しません。
+        </div>
+      </div>
+
+      <div class="search-row">
+        <input id="placeInput" type="search" autocomplete="off" enterkeyhint="go"
+               placeholder="施設名・店名・住所を入力">
+        <button id="setTypedDestBtn" class="primary">設定</button>
+        <button id="clearSearchBtn">消去</button>
+      </div>
+
+      <div id="googleStatus" class="search-status">APIキーを保存するとGoogle検索を開始できます。</div>
+      <div id="placeResults" class="place-results"></div>
+
+      <div class="nav-buttons">
+        <button id="clearDestBtn">目的地クリア</button>
+</div>
+
+      <details class="manual voice-settings">
+        <summary>🔊 音声案内設定</summary>
+        <div class="voice-setting-grid">
+          <label>声の種類
+            <select id="voiceSelect"><option value="">日本語の標準音声</option></select>
+          </label>
+          <label>速度 <span id="voiceRateValue">0.96</span>
+            <input id="voiceRate" type="range" min="0.7" max="1.3" step="0.05" value="0.96">
+          </label>
+          <label>高さ <span id="voicePitchValue">1.00</span>
+            <input id="voicePitch" type="range" min="0.7" max="1.3" step="0.05" value="1">
+          </label>
+          <label>音量 <span id="voiceVolumeValue">100%</span>
+            <input id="voiceVolume" type="range" min="0" max="1" step="0.1" value="1">
+          </label>
+        </div>
+        <button id="voiceTestBtn" class="wide" type="button">この声を試す</button>
+        <div id="voiceSettingsStatus" class="search-status">このiPhoneで使える日本語音声を表示します。</div>
+      </details>
+
+      <details class="manual">
+        <summary>Google APIキー設定</summary>
+        <button id="changeKeyBtn" class="wide">保存済みAPIキーを変更</button>
+      </details>
+
+      <div class="nav-help">
+        Google Placesの検索候補から目的地を1タップで設定します。<br>
+        ADVENTUREはイカが目的地方向と直線距離だけを案内。ROUTEは目的地選択後に地図へ戻り、最大3つの道路ルート候補から選べます。
+      </div>
+    </section>
+    </div>
+  </section>
+
+  <section id="landscapeCockpit" class="landscape-cockpit" aria-label="横向き走行コックピット">
+    <div class="land-block land-speed-block">
+      <div class="land-label">速度</div>
+      <div class="land-speed-line"><span id="landSpeed" class="land-speed">0</span><span class="land-unit">km/h</span></div>
+      <div id="landStatus" class="land-mini-status">待機中</div>
+    </div>
+
+    <div class="land-block land-nav-block">
+      <div id="landName" class="land-dest">目的地未設定</div>
+      <div class="land-map-shell">
+        <div id="landMap" class="jarvis-map" aria-label="Googleマップ 横向きナビ表示"></div>
+        <div class="land-map-compass"><span>北</span><span>東</span><span>南</span><span>西</span></div>
+        <button id="landHeadingModeBtn" class="land-heading-mode-btn" type="button" aria-label="地図の向きを切替">北↑</button>
+        <button id="landThemeModeBtn" class="land-heading-mode-btn land-theme-mode-btn" type="button" aria-label="地図の明暗を切替">AUTO</button>
+        <button id="landMapViewBtn" class="land-heading-mode-btn land-map-view-btn" type="button" aria-label="地図表示を切替">地図</button>
+      </div>
+    </div>
+
+    <div class="land-block land-info-block">
+      <div class="land-distance-wrap"><span class="land-label">残り距離</span><div id="landDistance" class="land-distance">-- km</div></div>
+      <div class="land-info-grid">
+        <div><span class="land-label">時刻</span><strong id="landClock">--:--</strong></div>
+        <div><span class="land-label">気温</span><strong><span id="landTemp">--</span>°C</strong></div>
+        <div class="land-weather-cell"><span id="landWeatherIcon">--</span><strong id="landWeatherText">GPS待機中</strong><small id="landRain">降水 --%</small></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="controls">
+    <button id="startBtn" class="primary">START</button>
+    <button id="stopBtn" disabled>STOP</button>
+    <button id="resetBtn" class="danger">RESET</button>
+  </div>
+
+  <section class="diag">
+    <div class="diag-head"><h2>GPS診断</h2><button id="diagBtn" class="mini">再診断</button></div>
+    <div class="diag-row"><span>HTTPS</span><strong id="secureState">確認中</strong></div>
+    <div class="diag-row"><span>位置情報API</span><strong id="apiState">確認中</strong></div>
+    <div class="diag-row"><span>権限状態</span><strong id="permState">確認中</strong></div>
+    <div class="diag-row"><span>GPS状態</span><strong id="gpsState">未開始</strong></div>
+    <div class="diag-row"><span>画面保持</span><strong id="wakeDiag">未開始</strong></div>
+    <div id="diagMessage" class="diag-msg">STARTを押すと、GPS取得を試します。</div>
+  </section>
+
+  <section class="meter">
+    <h2>メーター誤差チェック</h2>
+    <div class="inputrow">
+      <input id="meterInput" inputmode="decimal" type="number" step="0.1" placeholder="メーター表示 km/h">
+      <button id="calcBtn" class="calc">計算</button>
+    </div>
+    <div class="result">
+      <div class="resultbox"><div class="k">GPSとの差</div><div id="diff" class="v">--</div></div>
+      <div class="resultbox"><div class="k">メーター誤差率</div><div id="errorRate" class="v">--</div></div>
+    </div>
+  </section>
+
+  <div class="note">
+    🔒 位置・速度・走行データは端末内で処理し、サーバーへ保存・送信しません。<br>
+    v6.14.44（本ビルド）：v6.14.18を基準に、v6.14.19 display-engine分離パッチ、v6.14.24 TURN GUARD、v6.14.26 GUIDANCE CENTER、v6.14.27 LOCAL CORRIDOR、v6.14.28 REROUTE CORRIDORをapp-v6.14.18.jsへ実コードとして統合。加えてARRIVAL SNAP（到着判定の2経路化）、音声案内の重複修正（maneuverキーの安定化）、START ORIGIN GUARD（ルート整合性チェック）、routeIntegrity/motionDiag診断を新規実装。詳細はDEVELOPMENT_STATE_v6.14.44.mdおよびv6.14.44-source/README.mdを参照。<br>
+    v6.14.18：v6.14.14を基準に、Google Navigation SDKのRoad-Snapped Location Providerの思想を参考に自車位置表示を独立安定化。FREE TRACK / OFF_ROUTEではraw GPS fixを直接描画せず、速度・fix間隔・精度から物理的に妥当な移動量へ制限し、進行方向に対する横方向ノイズを強く抑制。実際の右左折ではcourse変化を検知してフィルタを緩める。リルート後の再吸着は4fix連続一致へ厳格化し、再合流時も現在表示位置に近いroute progressから滑らかに復帰。v6.14.14の逸脱カメラ、白線、ルートgeometry、アダプティブズームは維持。<br>
+    v6.14.14：v6.14.13を基準に、ルート逸脱時のカメラ所作を再設計。逸脱検知後は約1.8秒かけて緩やかにズームアウトし、位置・縦方向の追従・地図回転を別々に低速化。大きな位置差でもカメラ移動量を制限し、自車が一時的に画面外へ出ても瞬間ワープで戻さない。通常案内では予定ルートの曲がりを先読みして地図を回さず、実車の進行方向が変わった後にヘディングアップを追従。GPS間のルート先読みも実進行方向と28°以上ずれる場合は交差点手前で抑制。白線・ルートgeometry・アダプティブズームは維持。<br>
+    v6.14.0：Google Routes設計に合わせ、リルートを現在地＋進行方向基準へ刷新。仮想160m経由点/Uターン依存を廃止し、代替ルートを進行方向適合度＋所要時間で選択。目的地は到着・再検索失敗で勝手に消さず、到着判定もルート終端と組み合わせて誤判定を防止。<br>
+    「近くのコンビニ／ガソリンスタンド／トイレ／駐車場／スーパー」等は現在地5km以内をNearby Searchで近い順に表示。AUTO/DARK/LIGHTも維持。<br>
+    ※ 走行中の画面操作はせず、安全な場所に停車して操作してください。
+  </div>
+</div>
+<script src="app.js" defer></script>
+
+
+
+
+<div id="jarvisGuidanceDiag" style="margin:10px 32px 4px;color:#8793a6;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,sans-serif;word-break:break-word">
+案内診断: 待機中
+</div>
+<div id="jarvisBuildTag" style="position:fixed;left:8px;bottom:4px;z-index:99999;background:rgba(255,176,32,.14);border:1px solid rgba(255,176,32,.4);border-radius:6px;padding:2px 6px;
+font:600 10px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;color:#7d8796;
+opacity:.55;pointer-events:none">JARVIS ROAD TEST v6.14.57-ROADTEST-20260904T222603Z</div>
+<script>
+// Forces ROAD TEST mode on for this deployment specifically, and stamps a fresh, unique
+// BUILD-ID app-v6.14.44.js reads back via window.__JARVIS_ROAD_TEST_BUILD_ID (see that file's
+// "v6.14.46 ROAD TEST telemetry" section) — shown in the on-screen build tag above and in every
+// JSON export, so two deployments of this site are never confused with each other.
+window.__JARVIS_ROAD_TEST_BUILD_ID="v6.14.57-ROADTEST-20260904T222603Z";
+try{localStorage.setItem('jarvisRoadTestMode','1');}catch(e){}
+</script>
+<script src="road-test-ui.js" defer></script>
+</body>
+</html>

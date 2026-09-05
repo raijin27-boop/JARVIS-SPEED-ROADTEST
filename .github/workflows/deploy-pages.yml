@@ -1,4 +1,4 @@
-name: Deploy JARVIS v6.14.56 Road Test
+name: Deploy JARVIS Road Test (canonical build)
 on:
   push:
     branches: [main]
@@ -15,34 +15,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch current verified v6.14.55 public baseline
+      - name: Assemble _site directly from the repo's own checked-in canonical files
         run: |
           set -euo pipefail
           rm -rf _site
           mkdir -p _site
-          BASE='https://raijin27-boop.github.io/JARVIS-SPEED-ROADTEST'
-          for f in index.html app.js app.css road-test-ui.js manifest.webmanifest icon-192.png icon-512.png redesign-v654-tests.json; do
-            curl -fsSL "$BASE/$f?baseline=v655" -o "_site/$f"
+          for f in index.html app.js app.css road-test-ui.js icon-192.png icon-512.png; do
+            cp "$f" "_site/$f"
           done
-          grep -q 'JARVIS-v6.14.55-ROADTEST' _site/index.html
-          grep -q 'function jarvisTrackingSnapTarget' _site/app.js
-          grep -q 'jarvisCommitRoute' _site/app.js
-      - name: Apply v6.14.56 targeted changes
-        run: python tools/apply-v656-public.py
-      - name: Validate v6.14.56 public build
+          touch _site/.nojekyll
+      - name: Validate build
         run: |
           set -euo pipefail
-          touch _site/.nojekyll
           node --check _site/app.js
           node --check _site/road-test-ui.js
-          grep -q 'JARVIS-v6.14.56-ROADTEST' _site/index.html
-          grep -q 'function jarvisTrackingSnapTargetV656' _site/app.js
-          grep -q 'function jarvisChooseRerouteCandidateV656' _site/app.js
-          grep -q 'function jarvisWakeGuardianV656' _site/app.js
-          grep -q 'maxWhiteSpan=win.branch?52:38' _site/app.js
-          grep -q 'return !!(navSessionStarted||running);' _site/app.js
-          node -e "const r=require('./_site/redesign-v654-tests.json'); if(!Array.isArray(r.results)||r.results.length!==8||!r.results.every(x=>x.pass===true)) process.exit(1)"
-          echo 'JARVIS_V656_PUBLIC_BUILD_OK'
+          echo 'JARVIS_ROADTEST_BUILD_OK'
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,1 +1,611 @@
-:root{--bg:#080b10;--panel:#111722;--panel2:#151d2a;--text:#f4f7fb;--muted:#8f9bad;--accent:#66d9ff;--accent2:#9df7d2;--danger:#ff6d7a;--line:#263142}*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif}body{min-height:100vh;padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom)}.app{max-width:620px;margin:0 auto}.hidden{display:none!important}.top{display:flex;justify-content:space-between;align-items:center;padding:8px 4px}.brand{font-size:12px;font-weight:800;letter-spacing:.13em;color:var(--accent)}.status{font-size:12px;color:var(--muted)}button{appearance:none;border:1px solid var(--line);border-radius:13px;padding:11px 12px;font-size:14px;font-weight:750;background:#1a2432;color:#fff}button.primary{background:var(--accent);color:#051017}button.danger{background:#2a171c;color:#ff9ba5}button:disabled{opacity:.45}input,select,textarea{width:100%;background:var(--panel2);color:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px}.hero,.nav-set,.diag,.meter{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px;margin-top:10px}.hero{text-align:center}.label,.accuracy,.wake,.k,.tiny,.search-status,.nav-help,.field-label{color:var(--muted)}.speed{font-size:78px;line-height:1;font-weight:850;margin:10px 0}.unit{color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px}.card .v{font-size:24px;font-weight:800}.controls{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;margin-top:10px}.tabs,.nav-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.tab.active,.nav-mode-switch button.active{background:var(--accent);color:#051017}.nav-hero{margin-top:6px}.nav-map-shell{position:relative;height:min(58vh,520px);min-height:390px;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#0b111a}.jarvis-map{width:100%;height:100%;background:#0b111a}.map-compass{position:absolute;inset:0;pointer-events:none}.map-compass span{position:absolute;font-size:10px;background:#111b;padding:2px 5px;border-radius:5px}.map-compass span:nth-child(1){top:7px;left:50%;transform:translateX(-50%)}.map-compass span:nth-child(2){right:6px;top:50%}.map-compass span:nth-child(3){bottom:7px;left:50%;transform:translateX(-50%)}.map-compass span:nth-child(4){left:6px;top:50%}.nav-map-top{position:absolute;top:9px;left:10px;right:10px;z-index:5;display:flex;justify-content:center;pointer-events:none}.route-summary{background:rgba(8,11,16,.82);backdrop-filter:blur(8px);padding:7px 11px;border-radius:999px;font-size:13px}.nav-distance{font-size:20px;font-weight:850}.map-control-stack{position:absolute;right:8px;top:58px;z-index:8;display:grid;gap:6px}.heading-mode-btn,.recenter-btn{width:48px;height:44px;padding:5px;border-radius:11px;background:rgba(12,18,27,.88);font-size:11px}.voice-volume-popup{position:absolute;right:52px;top:0;width:180px;background:#101722;padding:10px;border-radius:12px}.map-state,.map-diag,.via-hint{position:absolute;z-index:6;left:8px;background:rgba(8,11,16,.8);border-radius:8px;padding:4px 7px;font-size:10px;max-width:70%}.map-state{bottom:8px}.map-diag{bottom:34px}.via-hint{bottom:60px}.map-start-btn{position:absolute;z-index:9;left:50%;transform:translateX(-50%);bottom:78px;min-width:180px;background:#0b63ce}.map-action-main,.map-action-sub{display:block}.map-action-sub{font-size:10px;opacity:.85;margin-top:2px}.map-info-strip{position:absolute;left:8px;right:8px;bottom:8px;z-index:7;display:grid;grid-template-columns:1fr 1.3fr 1.2fr;background:rgba(8,11,16,.86);border:1px solid #30405a;border-radius:12px;overflow:hidden}.nav-info-card{text-align:center;padding:7px 5px}.nv{font-size:20px;font-weight:850}.nav-bottom-sheet{background:var(--panel);border:1px solid var(--line);border-radius:18px;margin-top:10px;padding:8px 12px}.nav-sheet-handle{height:20px;display:flex;justify-content:center;align-items:center}.nav-sheet-grabber{width:48px;height:5px;border-radius:999px;background:#526276}.nav-set h2,.diag h2,.meter h2{margin:0 0 10px;font-size:15px}.search-row{display:grid;grid-template-columns:1fr auto auto;gap:7px;margin-bottom:8px}.key-setup .search-row{grid-template-columns:1fr auto}.place-results{display:grid;gap:7px}.place-result{width:100%;text-align:left}.place-result strong,.place-result span{display:block}.place-result span{font-size:11px;color:var(--muted);margin-top:3px}.diag-row{display:flex;justify-content:space-between;border-bottom:1px solid #223044;padding:7px 0}.diag-msg{font-size:12px;margin-top:8px}.ok,.diag-ok{color:var(--accent2)!important}.bad,.diag-bad{color:var(--danger)!important}.diag-warn{color:#ffd27d!important}.result{display:grid;grid-template-columns:1fr 1fr;gap:8px}.resultbox{background:var(--panel2);border-radius:12px;padding:10px}.note{font-size:10px;line-height:1.45;color:var(--muted);margin:12px 4px}.landscape-cockpit{display:none}.route-map-label{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;padding:5px 7px;border-radius:8px;font-size:10px;z-index:20}.map-squid-marker{position:absolute;transform:translate(-50%,-50%);pointer-events:none}.earth-orb{width:20px;height:20px;border-radius:50%;background:#238cff;border:3px solid #fff;box-shadow:0 0 12px #238cff}.squid-arrow{transform:rotate(var(--squid-heading,0deg))}.jarvis-place-popup{color:#111}.voice-setting-grid{display:grid;gap:8px}.manual{margin-top:10px}.wide{width:100%}@media(max-width:390px){body{padding-left:6px;padding-right:6px}.nav-map-shell{height:56vh;min-height:360px}.speed{font-size:68px}.search-row{grid-template-columns:1fr auto}.search-row #clearSearchBtn{grid-column:2}.map-control-stack{right:5px}.heading-mode-btn,.recenter-btn{width:44px;height:40px}.nav-info-card{padding:6px 3px}.nv{font-size:18px}}
+
+:root{--bg:#080b10;--panel:#111722;--panel2:#151d2a;--text:#f4f7fb;--muted:#8f9bad;--accent:#66d9ff;--accent2:#9df7d2;--danger:#ff6d7a;--line:#263142}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif}
+body{min-height:100vh;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}
+.app{max-width:560px;margin:0 auto}.top{display:flex;align-items:center;justify-content:space-between;padding:10px 2px 4px}
+.brand{font-size:13px;letter-spacing:.18em;font-weight:700;color:var(--accent)}.status{font-size:12px;color:var(--muted)}
+.hero{margin-top:8px;padding:22px 18px 18px;border:1px solid var(--line);border-radius:26px;background:linear-gradient(180deg,#101722,#0d131c);text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.28)}
+.label{font-size:12px;color:var(--muted);letter-spacing:.16em}.speed{font-size:92px;line-height:.92;font-weight:800;letter-spacing:-.055em;margin:14px 0 4px}.unit{font-size:18px;color:var(--muted);font-weight:600}.accuracy,.wake{margin-top:12px;font-size:13px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px}.card .k{font-size:12px;color:var(--muted)}.card .v{font-size:28px;font-weight:750;margin-top:5px}.card .s{font-size:12px;color:var(--muted);margin-left:3px}
+.controls{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px;margin-top:12px}
+button{appearance:none;border:none;border-radius:16px;padding:15px 12px;font-size:15px;font-weight:750;background:#1a2432;color:white}button.primary{background:var(--accent);color:#051017}button.danger{background:#2a171c;color:#ff9ba5}button:disabled{opacity:.45}
+.meter,.diag{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:15px}.meter h2,.diag h2{font-size:15px;margin:0 0 12px}
+.inputrow{display:grid;grid-template-columns:1fr auto;gap:10px}input{width:100%;background:var(--panel2);color:white;border:1px solid var(--line);border-radius:14px;padding:13px 14px;font-size:18px;outline:none}.calc{background:#1a2432;padding:13px 16px;border-radius:14px}
+.result{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.resultbox{background:var(--panel2);border-radius:14px;padding:12px}.resultbox .k{font-size:11px;color:var(--muted)}.resultbox .v{font-size:22px;font-weight:750;margin-top:3px}
+.note{font-size:12px;line-height:1.55;color:var(--muted);margin:12px 4px 20px}.ok{color:var(--accent2)}.bad{color:var(--danger)}.ver{font-size:.55em;opacity:.65;letter-spacing:.05em}
+.diag-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.diag-head h2{margin:0;font-size:20px}.mini{padding:9px 13px;border-radius:12px;font-size:13px}
+.diag-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #223044;color:#9ca9bc}.diag-row strong{color:#eef4ff;text-align:right}
+.diag-ok{color:#69e6a6!important}.diag-bad{color:#ff8d9c!important}.diag-warn{color:#ffd27d!important}.diag-msg{margin-top:12px;padding:12px 14px;border-radius:14px;background:#0b111a;color:#b9c4d4;line-height:1.5;font-size:14px}.diag-msg.ok{color:#69e6a6}.diag-msg.bad{color:#ff9ba8}.diag-msg.warn{color:#ffd27d}
+
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 10px}
+.tab{padding:11px 10px;border-radius:14px;background:#111722;color:#8f9bad;border:1px solid #263142}
+.tab.active{background:#66d9ff;color:#051017}
+.hidden{display:none!important}
+.nav-hero{padding:22px 18px 18px;border:1px solid var(--line);border-radius:26px;background:linear-gradient(180deg,#101722,#0d131c);text-align:center}
+.nav-name{font-size:20px;font-weight:750;margin-top:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.arrow-wrap{height:210px;display:flex;align-items:center;justify-content:center}
+.nav-arrow{font-size:150px;line-height:1;transform-origin:50% 52%;transition:transform .25s linear;color:var(--accent);filter:drop-shadow(0 0 18px rgba(102,217,255,.22))}
+.nav-distance{font-size:42px;font-weight:800;letter-spacing:-.03em}
+.nav-sub{font-size:13px;color:var(--muted);margin-top:6px}
+.nav-set{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:15px}
+.nav-set h2{font-size:15px;margin:0 0 12px}
+.nav-set input{margin-bottom:10px}
+.nav-buttons{display:grid;grid-template-columns:1.2fr 1fr;gap:10px}
+.wide{width:100%;margin-top:10px}
+.nav-help{font-size:12px;line-height:1.55;color:var(--muted);margin-top:12px}
+
+.search-row{display:grid;grid-template-columns:1fr auto;gap:10px}
+.search-row input{margin-bottom:0}
+.search-status{font-size:12px;color:var(--muted);margin:10px 2px 8px;min-height:18px}
+.search-results{display:grid;gap:8px;margin:8px 0 12px}
+.search-item{width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+.search-item .name{display:block;font-size:14px;font-weight:750;color:var(--text);line-height:1.35}
+.search-item .sub{display:block;font-size:11px;color:var(--muted);margin-top:4px;line-height:1.35}
+.search-empty{padding:12px;border-radius:12px;background:#0b111a;color:var(--muted);font-size:13px}
+.osm-credit{margin-top:6px;font-size:10px;opacity:.8}
+
+.key-setup{margin:8px 0 14px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#0b111a}
+.field-label{font-size:12px;color:var(--muted);margin-bottom:7px}
+.place-results{display:grid;gap:8px;margin:10px 0 14px}
+.place-result{width:100%;text-align:left;background:var(--panel2);color:white;border:1px solid var(--line);border-radius:13px;padding:11px 12px}
+.place-result strong{display:block;font-size:15px;margin-bottom:3px}
+.place-result span{display:block;font-size:11px;color:var(--muted);line-height:1.35}
+.hidden{display:none!important}
+
+/* ===== v2.2 NAV cockpit ===== */
+.compass-face{position:relative;max-width:390px;height:250px;margin:8px auto 0;border-radius:50%;background:radial-gradient(circle at center,rgba(102,217,255,.055),transparent 60%);border:1px solid rgba(143,155,173,.12)}
+.compass-face:before{content:"";position:absolute;inset:17px;border-radius:50%;border:1px dashed rgba(143,155,173,.26)}
+.dir{position:absolute;color:#d7dde7;font-weight:800;font-size:17px;z-index:2}.dir-n{top:5px;left:50%;transform:translateX(-50%)}.dir-e{right:10px;top:50%;transform:translateY(-50%)}.dir-s{bottom:5px;left:50%;transform:translateX(-50%)}.dir-w{left:10px;top:50%;transform:translateY(-50%)}
+.arrow-wrap{position:absolute;inset:24px;display:flex;align-items:center;justify-content:center;height:auto}
+.nav-arrow{width:124px;height:174px;font-size:0;transform-origin:50% 50%;transition:transform .25s linear;color:var(--accent);filter:drop-shadow(0 0 14px rgba(102,217,255,.18))}
+.squid-arrow svg{width:100%;height:100%;overflow:visible}.squid-body{fill:#cfc5ad;stroke:#737b70;stroke-width:3;stroke-linejoin:round}.squid-leg{fill:none;stroke:#cfc5ad;stroke-width:13;stroke-linecap:round}.squid-eye{fill:none;stroke:#303730;stroke-width:5;stroke-linecap:round}
+.nav-info-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:12px;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--line)}
+.nav-info-card{min-width:0;background:var(--panel);text-align:center;padding:12px 5px 10px}.nav-info-card .k{font-size:11px;color:var(--muted);margin-bottom:6px}.nv{font-size:27px;font-weight:800;letter-spacing:-.04em}.nv.clock{font-size:22px}.nu{font-size:11px;color:var(--muted);margin-left:2px}.tiny{font-size:10px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.weather-icon{font-size:23px;line-height:1.15}.rain{font-size:11px;color:#66b9ff;margin-top:4px}
+@media(max-width:390px){.nav-info-card{padding-left:3px;padding-right:3px}.nv{font-size:24px}.nv.clock{font-size:19px}.weather-icon{font-size:20px}.tiny,.rain{font-size:9px}.compass-face{height:235px}.nav-arrow{width:116px;height:162px}}
+
+/* ===== v2.3 landscape one-screen cockpit ===== */
+.landscape-cockpit{display:none}
+@media (orientation:landscape) and (max-height:520px){
+  html,body{height:100%;overflow:hidden}
+  body{padding:env(safe-area-inset-top) max(10px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(10px,env(safe-area-inset-left))}
+  .app{max-width:none;height:100%;display:flex;flex-direction:column;gap:7px}
+  .top,.tabs,#speedPanel,#navPanel,.diag,.meter,.note{display:none!important}
+  .landscape-cockpit{display:grid;grid-template-columns:34% 34% 32%;min-height:0;flex:1;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#0c1119}
+  .land-block{min-width:0;min-height:0;position:relative;background:linear-gradient(180deg,#111823,#0d131c)}
+  .land-block+.land-block{border-left:1px solid var(--line)}
+  .land-label{display:block;color:var(--muted);font-size:11px;letter-spacing:.08em}
+  .land-speed-block{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 10px}
+  .land-speed-line{display:flex;align-items:flex-end;justify-content:center;line-height:.82;margin-top:8px}
+  .land-speed{font-size:clamp(72px,14vh,116px);font-weight:850;letter-spacing:-.07em}
+  .land-unit{font-size:14px;color:var(--muted);font-weight:700;margin:0 0 7px 6px}
+  .land-mini-status{margin-top:12px;font-size:12px;color:var(--muted)}
+  .land-nav-block{display:flex;flex-direction:column;align-items:center;padding:7px 10px}
+  .land-dest{font-size:15px;font-weight:800;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+  .land-compass{position:relative;flex:1;width:min(100%,245px);min-height:150px;margin:auto}
+  .land-dir{position:absolute;font-weight:800;font-size:13px;color:#e6ebf2}.land-n{top:0;left:50%;transform:translateX(-50%)}.land-e{right:2px;top:50%;transform:translateY(-50%)}.land-s{bottom:0;left:50%;transform:translateX(-50%)}.land-w{left:2px;top:50%;transform:translateY(-50%)}
+  .land-squid{position:absolute;left:50%;top:50%;width:82px;height:114px;transform:translate(-50%,-50%) rotate(0deg);transform-origin:50% 50%;transition:transform .25s linear;filter:drop-shadow(0 0 12px rgba(102,217,255,.18))}
+  .land-squid svg{width:100%;height:100%;overflow:visible}
+  .land-bearing{font-size:11px;color:var(--muted);height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .land-info-block{display:flex;flex-direction:column;padding:10px 12px}
+  .land-distance-wrap{padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .land-distance{font-size:clamp(34px,7.5vh,56px);font-weight:850;line-height:1.05;letter-spacing:-.04em;margin-top:3px}
+  .land-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:5px;flex:1;align-content:stretch}
+  .land-info-grid>div{padding:7px 5px;min-width:0}.land-info-grid>div:nth-child(2){border-left:1px solid var(--line)}
+  .land-info-grid strong{display:block;font-size:clamp(19px,4.2vh,31px);margin-top:3px;white-space:nowrap}
+  .land-weather-cell{grid-column:1/-1;border-top:1px solid var(--line);display:grid!important;grid-template-columns:auto 1fr;grid-template-rows:1fr 1fr;column-gap:8px;align-items:center}
+  .land-weather-cell>span{grid-row:1/3;font-size:27px}.land-weather-cell strong{font-size:15px;margin:0}.land-weather-cell small{color:#66b9ff;font-size:11px}
+  .controls{display:grid!important;grid-template-columns:1.15fr 1fr 1fr;gap:7px;margin:0;height:46px;flex:0 0 46px}
+  .controls button{padding:7px 10px;border-radius:12px;font-size:13px}
+}
+
+/* ===== v2.4 Google Maps NAV ===== */
+.nav-map-shell{position:relative;height:285px;margin:10px auto 12px;border-radius:24px;overflow:hidden;border:1px solid var(--line);background:#0b111a}
+.jarvis-map{width:100%;height:100%;background:#0b111a}
+.map-state{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:4;padding:6px 10px;border-radius:999px;background:rgba(8,11,16,.78);backdrop-filter:blur(8px);font-size:11px;color:#d6deea;pointer-events:none;white-space:nowrap}
+.map-compass,.land-map-compass{position:absolute;inset:0;z-index:3;pointer-events:none;color:#fff;font-weight:850;text-shadow:0 1px 6px #000;font-size:12px}
+.map-compass span,.land-map-compass span{position:absolute;padding:4px 6px;border-radius:8px;background:rgba(8,11,16,.58)}
+.map-compass span:nth-child(1),.land-map-compass span:nth-child(1){top:7px;left:50%;transform:translateX(-50%)}
+.map-compass span:nth-child(2),.land-map-compass span:nth-child(2){right:7px;top:50%;transform:translateY(-50%)}
+.map-compass span:nth-child(3),.land-map-compass span:nth-child(3){bottom:7px;left:50%;transform:translateX(-50%)}
+.map-compass span:nth-child(4),.land-map-compass span:nth-child(4){left:7px;top:50%;transform:translateY(-50%)}
+.map-direction-chip,.land-direction-chip{position:absolute;z-index:4;left:50%;top:50%;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(8,11,16,.76);border:1px solid rgba(255,255,255,.38);box-shadow:0 3px 14px rgba(0,0,0,.35);font-size:28px;font-weight:900;color:white;transform:translate(-50%,-50%) rotate(0deg);transform-origin:50% 50%;pointer-events:none;transition:transform .25s linear}
+.map-squid-marker{position:absolute;width:34px;height:48px;transform:translate(-50%,-70%) rotate(var(--squid-heading,0deg));transform-origin:50% 70%;filter:drop-shadow(0 2px 6px rgba(0,0,0,.65));pointer-events:none}
+.map-squid-marker svg{width:100%;height:100%;display:block;overflow:visible}
+.map-squid-marker .squid-body{fill:#f0ece3;stroke:#5f6670;stroke-width:4}.map-squid-marker .squid-leg{stroke:#f0ece3;stroke-width:15}.map-squid-marker .squid-eye{stroke:#10141a;stroke-width:6}
+.land-map-shell{position:relative;flex:1;width:100%;min-height:150px;margin:3px 0 4px;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#0b111a}
+.land-direction-chip{width:36px;height:36px;font-size:22px}
+@media(max-width:390px){.nav-map-shell{height:255px}}
+@media (orientation:landscape) and (max-height:520px){
+  .land-nav-block{padding:5px 7px}
+  .land-map-shell{min-height:0}
+  .land-map-compass{font-size:10px}
+  .land-map-compass span{padding:2px 4px}
+}
+
+/* ===== v2.5 Full-screen interactive NAV ===== */
+html.nav-mode,html.nav-mode body{background:#080b10}
+body.nav-mode{padding:0;min-height:100svh}
+body.nav-mode .app{max-width:none;margin:0}
+body.nav-mode .top{display:none}
+body.nav-mode #navPanel{display:block!important}
+body.nav-mode .nav-hero{padding:0;border:0;border-radius:0;background:#0b111a;box-shadow:none}
+body.nav-mode .nav-map-shell{height:100svh;width:100%;margin:0;border:0;border-radius:0}
+body.nav-mode .diag,body.nav-mode .meter,body.nav-mode .note{max-width:560px;margin-left:auto;margin-right:auto}
+body.nav-mode .controls{max-width:560px;margin-left:auto;margin-right:auto;padding:0 14px}
+body.nav-mode .nav-set,body.nav-mode .mode-tabs{max-width:560px;margin-left:auto;margin-right:auto}
+
+.nav-map-top{position:absolute;z-index:5;top:max(12px,env(safe-area-inset-top));left:14px;right:14px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;pointer-events:none}
+.nav-map-top .nav-name{margin:0;max-width:58%;padding:9px 12px;border-radius:14px;background:rgba(8,11,16,.76);backdrop-filter:blur(10px);font-size:17px;text-align:left;box-shadow:0 4px 18px rgba(0,0,0,.22)}
+.nav-map-top .nav-distance{padding:6px 11px 8px;border-radius:14px;background:rgba(8,11,16,.80);backdrop-filter:blur(10px);font-size:34px;line-height:1;font-weight:850;white-space:nowrap;box-shadow:0 4px 18px rgba(0,0,0,.24)}
+.map-bearing-wrap{position:absolute;z-index:5;left:50%;top:calc(max(12px,env(safe-area-inset-top)) + 58px);transform:translateX(-50%);width:min(86%,430px);text-align:center;pointer-events:none}
+.map-bearing-wrap .nav-sub{display:inline-block;margin:2px 3px;padding:5px 8px;border-radius:999px;background:rgba(8,11,16,.70);backdrop-filter:blur(8px);color:#d8e0eb;font-size:11px}
+.recenter-btn{position:absolute;z-index:7;right:14px;bottom:132px;width:48px;height:48px;padding:0;border-radius:50%;background:rgba(8,11,16,.88);border:1px solid rgba(255,255,255,.35);box-shadow:0 4px 18px rgba(0,0,0,.35);font-size:27px;line-height:48px;color:#fff}
+.recenter-btn.following{background:var(--accent);color:#051017;border-color:transparent}
+.map-info-strip{position:absolute;z-index:6;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom));margin:0;background:rgba(38,49,66,.8);backdrop-filter:blur(12px);box-shadow:0 6px 24px rgba(0,0,0,.28)}
+.map-info-strip .nav-info-card{background:rgba(17,23,34,.86)}
+body.nav-mode .map-state{bottom:112px}
+body.nav-mode .map-compass span:nth-child(1){top:98px}
+body.nav-mode .map-compass span:nth-child(3){bottom:112px}
+body.nav-mode .map-direction-chip{width:54px;height:54px;font-size:32px}
+.mode-tabs{margin-top:12px;margin-bottom:10px;padding:0 14px}
+.speed-mode-tabs{margin-top:12px}
+
+@media(max-width:390px){
+  .nav-map-top .nav-distance{font-size:29px}
+  .nav-map-top .nav-name{font-size:15px;max-width:55%}
+  .recenter-btn{bottom:125px;width:44px;height:44px;font-size:24px}
+}
+
+@media (orientation:landscape) and (max-height:520px){
+  body.nav-mode{padding:env(safe-area-inset-top) max(10px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(10px,env(safe-area-inset-left))}
+  body.nav-mode .top,body.nav-mode #navPanel,body.nav-mode .diag,body.nav-mode .meter,body.nav-mode .note{display:none!important}
+}
+
+/* ===== v2.6 squid heading + heading-up + compact info ===== */
+.map-direction-chip,.land-direction-chip{display:none!important}
+.map-control-stack{position:absolute;z-index:8;right:14px;bottom:132px;display:grid;gap:8px}
+.map-control-stack .recenter-btn{position:static;right:auto;bottom:auto}
+.heading-mode-btn,.land-heading-mode-btn{width:48px;height:48px;padding:0;border-radius:50%;background:rgba(8,11,16,.88);border:1px solid rgba(255,255,255,.35);box-shadow:0 4px 18px rgba(0,0,0,.35);color:#fff;font-size:13px;font-weight:850;line-height:1}
+.heading-mode-btn.active,.land-heading-mode-btn.active{background:var(--accent);color:#051017;border-color:transparent}
+.land-heading-mode-btn{position:absolute;z-index:7;right:7px;top:7px;width:38px;height:38px;font-size:10px}
+.heading-up .map-compass,.heading-up .land-map-compass{display:none}
+.map-squid-marker{width:40px;height:56px;filter:drop-shadow(0 3px 8px rgba(0,0,0,.75)) drop-shadow(0 0 5px rgba(102,217,255,.24))}
+.map-info-strip{grid-template-columns:1.65fr 1.1fr 1fr}
+.map-info-strip .speed-card .nv{font-size:48px;line-height:.9;font-weight:900;letter-spacing:-.05em}
+.map-info-strip .speed-card .nu{font-size:12px}
+.clock-temp-card{display:flex;flex-direction:column;justify-content:center;gap:3px}
+.clock-temp-main{display:flex;align-items:baseline;justify-content:center;gap:8px;white-space:nowrap}
+.clock-temp-main .clock{font-size:22px}
+.temp-inline{font-size:16px;font-weight:800;color:#e8eef6}
+.weather-card{display:flex;flex-direction:column;justify-content:center}
+.weather-line{display:flex;align-items:center;justify-content:center;gap:4px;min-height:24px}
+.weather-line .weather-icon{font-size:22px}
+.weather-line .tiny{font-size:10px}
+body.nav-mode .map-state{bottom:116px}
+body.nav-mode .map-control-stack{bottom:126px}
+
+@media(max-width:390px){
+  .map-control-stack{right:10px}
+  .heading-mode-btn,.map-control-stack .recenter-btn{width:44px;height:44px}
+  .map-info-strip .speed-card .nv{font-size:42px}
+  .clock-temp-main{gap:5px}.clock-temp-main .clock{font-size:19px}.temp-inline{font-size:14px}
+}
+
+/* ===== v2.7 dark vector map + heading-up fix + cleaner HUD ===== */
+.map-bearing-wrap,.land-bearing{display:none!important}
+.map-info-strip{grid-template-columns:1.9fr .92fr 1fr}
+.clock-temp-card{padding:0!important;display:grid!important;grid-template-rows:1fr 1fr;gap:0!important;overflow:hidden}
+.clock-half,.temp-half{display:flex;align-items:center;justify-content:center;min-height:0}
+.clock-half{flex-direction:column;border-bottom:1px solid rgba(255,255,255,.12);padding:5px 3px 4px}
+.clock-half .clock{font-size:21px!important;line-height:1;font-weight:850}
+.clock-half .tiny{font-size:9px;margin-top:3px;color:var(--muted)}
+.temp-half{padding:4px 3px;font-size:22px;font-weight:900;line-height:1}
+.temp-unit{font-size:11px;margin-left:2px;color:var(--muted);font-weight:700}
+.map-info-strip .speed-card .nv{font-size:54px}
+body.nav-mode .map-compass span:nth-child(1){top:72px}
+@media(max-width:390px){
+  .map-info-strip{grid-template-columns:1.95fr .9fr 1fr}
+  .map-info-strip .speed-card .nv{font-size:48px}
+  .clock-half .clock{font-size:19px!important}
+  .temp-half{font-size:20px}
+}
+
+.theme-mode-btn{margin-top:6px;min-width:58px}.land-theme-mode-btn{right:10px;top:54px}
+
+/* ===== v2.9 heading diagnostics ===== */
+.map-diag{position:absolute;z-index:6;left:10px;bottom:96px;max-width:calc(100% - 78px);padding:4px 7px;border-radius:8px;background:rgba(5,8,12,.72);color:#d8f5ff;font-size:10px;font-weight:700;letter-spacing:.02em;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (orientation:landscape) and (max-height:520px){.map-diag{display:none}}
+\n.jarvis-place-popup{min-width:210px;max-width:270px;color:#111827;font:13px/1.35 system-ui,-apple-system,sans-serif}.jarvis-place-popup strong{display:block;font-size:15px;margin:5px 0 4px}.jarvis-place-popup .jarvis-place-meta{color:#4b5563;margin-bottom:5px}.jarvis-place-popup .jarvis-place-facts{color:#1f2937;font-weight:700;margin-bottom:6px}.jarvis-place-popup button{width:100%;border:0;border-radius:9px;padding:9px 10px;background:#111827;color:white;font-weight:850}.jarvis-place-media{margin:-2px -2px 7px}.jarvis-place-media.hidden{display:none}.jarvis-place-photo{display:block;width:100%;height:112px;object-fit:cover;border-radius:10px}.jarvis-photo-credit{display:block;margin-top:2px;color:#6b7280;font-size:8px;line-height:1.2}.jarvis-photo-credit a,.jarvis-place-links a{color:#2563eb;text-decoration:none}.jarvis-place-links{display:flex!important;gap:10px;margin:0 0 7px!important;font-size:11px;font-weight:750}\n
+/* ===== v3.5 ROUTE + ADVENTURE ===== */
+.route-summary{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.route-eta{padding:4px 9px;border-radius:10px;background:rgba(8,11,16,.78);backdrop-filter:blur(10px);font-size:12px;font-weight:800;color:#d8f5ff;white-space:nowrap}
+.nav-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 14px 4px}
+.nav-mode-switch button{min-height:44px;border-radius:13px;font-size:13px;font-weight:850;background:#151c27;border:1px solid var(--line);color:#dbe5ef}
+.nav-mode-switch button.active{background:var(--accent);color:#051017;border-color:transparent}
+body.nav-mode .nav-mode-switch{max-width:560px;margin:10px auto 4px;padding:0 14px}
+.route-warning{font-size:10px;color:#f6c66b}
+
+/* v3.6 route alternatives */
+.route-choice-panel{position:absolute;left:12px;right:12px;top:86px;z-index:17;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;pointer-events:auto}
+.route-choice-panel.hidden{display:none}
+.route-choice{min-width:0;padding:8px 6px;border-radius:13px;border:1px solid rgba(255,255,255,.18);background:rgba(13,18,27,.88);backdrop-filter:blur(12px);color:#eef6ff;display:flex;flex-direction:column;gap:2px;align-items:center;box-shadow:0 5px 20px rgba(0,0,0,.22)}
+.route-choice strong{font-size:11px}.route-choice span{font-size:11px;font-weight:750}.route-choice.active{background:rgba(24,117,184,.94);border-color:#70d2ff;box-shadow:0 0 0 1px rgba(112,210,255,.25),0 6px 22px rgba(0,0,0,.28)}
+@media (max-width:390px){.route-choice-panel{left:8px;right:8px;gap:5px}.route-choice{padding:7px 4px}.route-choice strong,.route-choice span{font-size:10px}}
+
+/* ===== v3.7 route preview UX ===== */
+.route-choice-panel{display:none!important}
+.map-start-btn{position:absolute;z-index:24;left:12px;bottom:132px;transform:none;min-width:132px;height:54px;padding:6px 16px;border-radius:27px;border:1px solid rgba(255,255,255,.32);background:#0b63ce;backdrop-filter:blur(12px);color:#fff;font-size:15px;font-weight:900;letter-spacing:.02em;box-shadow:0 6px 24px rgba(0,0,0,.38);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;transition:background .18s ease,color .18s ease,transform .12s ease}
+.map-start-btn.hidden{display:none}.map-start-btn.nav-running{background:rgba(30,40,52,.58);border-color:rgba(255,255,255,.30);color:rgba(255,255,255,.88)}.map-action-main{font-size:14px;font-weight:950;line-height:1.05}.map-action-sub{font-size:10px;font-weight:800;line-height:1.05;opacity:.86;white-space:nowrap}
+.route-map-label{position:absolute;transform:translate(-50%,-50%);padding:5px 8px;border-radius:999px;color:#fff;font:800 11px/1.1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;box-shadow:0 3px 12px rgba(0,0,0,.42);border:2px solid rgba(255,255,255,.88);pointer-events:auto;cursor:pointer;user-select:none;-webkit-user-select:none}
+.route-map-label.r0{background:#0b63ce}.route-map-label.r1{background:#72d2ff;color:#062032}.route-map-label.r2{background:#8fe6b0;color:#06351d;border-color:rgba(6,53,29,.24)}
+.route-map-label.selected{transform:translate(-50%,-50%) scale(1.08);box-shadow:0 4px 16px rgba(0,0,0,.52)}
+@media(max-width:390px){.map-start-btn{bottom:125px;height:50px;min-width:124px;padding:5px 13px}.map-action-main{font-size:13px}.map-action-sub{font-size:9px}.route-map-label{font-size:10px;padding:4px 7px}}
+
+/* v4.5: 目的地名は枠を外して地図に直接表示 */
+.nav-map-top .nav-name{background:transparent!important;backdrop-filter:none!important;box-shadow:none!important;padding:2px 4px!important;text-shadow:0 2px 5px rgba(0,0,0,.92),0 0 3px rgba(0,0,0,.9)}
+
+/* ===== v5.6 speed-meter bottom sheet ===== */
+.nav-bottom-sheet{position:relative}
+.nav-sheet-handle{display:none}
+body.nav-mode{overflow:hidden;--sheet-visible:142px}
+body.nav-mode #navPanel{height:100svh;overflow:hidden}
+body.nav-mode .nav-bottom-sheet{
+  position:fixed;z-index:30;left:0;right:0;bottom:0;
+  height:min(82svh,760px);max-height:calc(100svh - max(58px,env(safe-area-inset-top)));
+  background:rgba(8,11,16,.985);border-radius:24px 24px 0 0;
+  box-shadow:0 -8px 28px rgba(0,0,0,.34);border-top:1px solid rgba(255,255,255,.09);
+  overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  transform:translateY(calc(100% - 176px));transition:transform .28s cubic-bezier(.2,.8,.2,1);
+  padding-bottom:max(18px,env(safe-area-inset-bottom));will-change:transform;touch-action:pan-y;
+}
+body.nav-mode .nav-bottom-sheet.dragging{transition:none;user-select:none}
+body.nav-mode .nav-sheet-handle{
+  display:flex;position:absolute;top:4px;left:0;right:0;z-index:6;height:18px;
+  align-items:center;justify-content:center;background:transparent;cursor:ns-resize;touch-action:none;
+}
+.nav-sheet-grabber{width:46px;height:5px;border-radius:999px;background:rgba(220,228,238,.50);box-shadow:0 1px 0 rgba(255,255,255,.06)}
+/* The speed/weather frame itself is the sheet header and drag surface. */
+body.nav-mode .nav-bottom-sheet>.map-info-strip{
+  position:sticky!important;top:0!important;left:auto!important;right:auto!important;bottom:auto!important;
+  z-index:5;width:calc(100% - 20px);margin:0 10px 10px!important;padding-top:18px;
+  border-radius:22px;background:var(--panel);box-shadow:0 7px 24px rgba(0,0,0,.30);
+  touch-action:none;cursor:ns-resize;
+}
+body.nav-mode .nav-mode-switch{display:none!important}
+body.nav-mode .mode-tabs{margin:8px auto 10px;padding:0 14px;max-width:560px}
+body.nav-mode .nav-set{margin:0 auto 18px;max-width:560px;border-radius:20px 20px 0 0;border-left:0;border-right:0;border-bottom:0}
+/* Map remains full height; only controls float above the visible sheet header. */
+body.nav-mode .map-control-stack{bottom:calc(var(--sheet-visible) + 16px)}
+body.nav-mode .map-state{bottom:calc(var(--sheet-visible) + 10px)}
+body.nav-mode .map-diag{bottom:calc(var(--sheet-visible) + 2px)}
+body.nav-mode .map-start-btn{bottom:calc(var(--sheet-visible) + 12px)}
+@media(max-width:390px){body.nav-mode{--sheet-visible:138px}}
+
+/* v5.6 direct destination set */
+body.nav-mode .nav-set .search-row #setTypedDestBtn{flex:0 0 auto;min-width:72px}
+body.nav-mode .nav-set .search-row #clearSearchBtn{flex:0 0 auto;min-width:68px}
+
+/* v5.8 voice settings */
+.voice-settings{margin-top:12px}
+.voice-setting-grid{display:grid;gap:12px;margin:12px 0}
+.voice-setting-grid label{display:grid;gap:6px;font-size:14px;color:#cbd5e1}
+.voice-setting-grid select{width:100%;min-height:44px;border-radius:12px;border:1px solid #334155;background:#111827;color:#f8fafc;padding:0 12px;font:inherit}
+.voice-setting-grid input[type=range]{width:100%;accent-color:#0b63ce}
+.voice-settings .wide{margin-top:4px}
+
+
+/* ===== v5.9 map label cleanup / volume popover / squid halo ===== */
+.nav-map-top{justify-content:flex-end!important;left:auto!important;right:14px!important;gap:0!important}
+.nav-map-top .nav-name{display:none!important}
+.route-summary{display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;padding:8px 11px!important;border-radius:16px!important;background:rgba(8,11,16,.82)!important;backdrop-filter:blur(10px);box-shadow:0 4px 18px rgba(0,0,0,.24);white-space:nowrap}
+.nav-map-top .nav-distance{padding:0!important;border-radius:0!important;background:transparent!important;backdrop-filter:none!important;box-shadow:none!important;font-size:22px!important;line-height:1!important;font-weight:900!important}
+.route-summary .route-eta{padding:0!important;margin:0!important;background:transparent!important;border-radius:0!important;font-size:13px!important;line-height:1!important;color:#dce7f4!important;font-weight:800!important;white-space:nowrap}
+.route-summary-dot{font-size:16px;color:#9fb0c5;font-weight:900;line-height:1}
+.voice-volume-wrap{position:relative;display:block}
+.voice-volume-popup{position:absolute;right:56px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px;width:188px;padding:9px 10px;border-radius:16px;background:rgba(8,11,16,.92);border:1px solid rgba(255,255,255,.22);box-shadow:0 6px 22px rgba(0,0,0,.38);backdrop-filter:blur(12px)}
+.voice-volume-popup.hidden{display:none!important}
+.voice-volume-popup input{width:130px;accent-color:#59d0f5}
+.voice-volume-popup span{min-width:38px;text-align:right;color:#fff;font-size:11px;font-weight:800}
+.map-squid-marker{overflow:visible!important}
+.map-squid-marker::before{content:"";position:absolute;z-index:0;left:50%;top:54%;width:84px;height:84px;transform:translate(-50%,-50%);border-radius:50%;background:rgba(48,154,255,.12);border:2px solid rgba(70,165,255,.35);box-shadow:0 0 0 10px rgba(48,154,255,.06);pointer-events:none}
+.map-squid-marker svg{position:relative;z-index:1}
+@media(max-width:390px){.route-summary{padding:7px 9px!important}.nav-map-top .nav-distance{font-size:20px!important}.route-summary .route-eta{font-size:12px!important}.voice-volume-popup{width:172px;right:52px}.voice-volume-popup input{width:116px}}
+
+
+/* ===== v6.3 destination fix / touch-friendly 0-100 volume slider ===== */
+.nav-name-hidden{display:none!important}
+.voice-volume-popup{width:232px;padding:8px 12px;gap:10px;touch-action:none}
+.voice-volume-popup input[type=range]{-webkit-appearance:none;appearance:none;width:168px;height:36px;margin:0;background:transparent;touch-action:none;cursor:pointer}
+.voice-volume-popup input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:999px;background:#566273}
+.voice-volume-popup input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#59d0f5;border:2px solid #fff;margin-top:-10px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.voice-volume-popup input[type=range]::-moz-range-track{height:8px;border-radius:999px;background:#566273}
+.voice-volume-popup input[type=range]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#59d0f5;border:2px solid #fff}
+.voice-volume-popup span{min-width:42px;font-size:12px}
+@media(max-width:390px){.voice-volume-popup{width:218px;right:52px}.voice-volume-popup input[type=range]{width:154px}}
+
+/* ===== v6.3 traffic-aware optimal + map view switch ===== */
+.map-view-btn{margin-top:0;font-size:11px!important;min-width:48px}
+.land-map-view-btn{right:10px;top:98px;font-size:9px!important}
+
+/* ===== v6.5 Google 3D Maps trial ===== */
+.jarvis-map-3d{position:absolute;inset:0;z-index:1;width:100%;height:100%;background:#0b111a}
+.jarvis-map-3d>gmp-map-3d{display:block;width:100%;height:100%}
+.nav-map-shell.is-3d #navMap{visibility:hidden;pointer-events:none}
+.nav-map-shell.is-3d #navMap3D{display:block!important}
+.nav-map-shell.is-3d .map-compass{display:none!important}
+.nav-map-shell.is-3d #headingModeBtn{opacity:.6}
+
+/* v6.10 preferred-road waypoint hint */
+.via-hint{
+  position:absolute;left:12px;top:78px;z-index:8;
+  padding:5px 9px;border-radius:999px;
+  font-size:11px;font-weight:700;letter-spacing:.02em;
+  color:rgba(255,255,255,.92);background:rgba(18,28,38,.58);
+  border:1px solid rgba(255,255,255,.18);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  pointer-events:none;
+}
+
+/* ===== v6.13.2 JARVIS earth squid ===== */
+.map-squid-marker{
+  filter:drop-shadow(0 3px 5px rgba(27,35,31,.34))!important;
+}
+.map-squid-marker::before{
+  background:radial-gradient(circle,rgba(126,160,149,.24) 0%,rgba(126,160,149,.13) 43%,rgba(126,160,149,0) 72%)!important;
+  border-color:rgba(160,185,175,.38)!important;
+}
+.map-squid-marker .squid-body{fill:#cfc5ad!important;stroke:#737b70!important}
+.map-squid-marker .squid-leg{stroke:#cfc5ad!important}
+.map-squid-marker .squid-eye{stroke:#303730!important}
+
+/* ===== v6.13.3 BLUE EARTH ORB =====
+   Original JARVIS marker: blue globe-like orb, not a Google logo/marker copy. */
+.map-squid-marker{
+  width:78px!important;
+  height:78px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  filter:drop-shadow(0 5px 8px rgba(0,24,54,.38))!important;
+}
+.map-squid-marker::before{
+  width:78px!important;
+  height:78px!important;
+  inset:0!important;
+  border-radius:50%!important;
+  background:radial-gradient(circle,rgba(63,180,255,.21) 0%,rgba(42,143,232,.10) 48%,rgba(42,143,232,0) 72%)!important;
+  border:1px solid rgba(113,205,255,.28)!important;
+}
+.map-squid-marker .squid-arrow{
+  width:52px!important;
+  height:52px!important;
+  transform:none!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+}
+.map-squid-marker .squid-arrow>svg{display:none!important}
+.map-squid-marker .earth-orb{
+  position:relative;
+  width:46px;
+  height:46px;
+  border-radius:50%;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 31% 25%,rgba(255,255,255,.92) 0 4%,rgba(255,255,255,.28) 8%,transparent 20%),
+    radial-gradient(circle at 35% 32%,#56c7ff 0 17%,#168fe7 43%,#0871c9 70%,#0455a5 100%);
+  border:2px solid rgba(215,244,255,.88);
+  box-shadow:
+    inset -8px -10px 13px rgba(0,45,105,.27),
+    inset 7px 6px 12px rgba(130,222,255,.22),
+    0 0 0 5px rgba(31,147,229,.16),
+    0 0 18px rgba(39,172,255,.42);
+}
+.map-squid-marker .earth-orb-shine{
+  position:absolute;
+  left:8px;top:6px;
+  width:13px;height:8px;
+  border-radius:50%;
+  background:rgba(255,255,255,.47);
+  transform:rotate(-28deg);
+  filter:blur(.3px);
+}
+.map-squid-marker .earth-orb-land{
+  position:absolute;
+  display:block;
+  background:rgba(71,190,178,.88);
+  box-shadow:inset -2px -2px 3px rgba(17,111,112,.25);
+}
+.map-squid-marker .land-a{
+  width:15px;height:9px;left:9px;top:18px;
+  border-radius:60% 35% 55% 30%;
+  transform:rotate(19deg);
+}
+.map-squid-marker .land-b{
+  width:10px;height:14px;left:23px;top:25px;
+  border-radius:35% 60% 50% 65%;
+  transform:rotate(-18deg);
+}
+.map-squid-marker .land-c{
+  width:8px;height:6px;left:29px;top:12px;
+  border-radius:70% 45% 65% 40%;
+  transform:rotate(24deg);
+}
+/* Legacy squid parts are intentionally suppressed from v6.13.3 onward. */
+.map-squid-marker .squid-body,
+.map-squid-marker .squid-leg,
+.map-squid-marker .squid-eye{display:none!important}
+
+/* ===== v6.13.4 BLUE ORB: exact concentric geometry ===== */
+.map-squid-marker{
+  width:78px!important;
+  height:78px!important;
+  position:relative!important;
+  display:block!important;
+  transform-origin:39px 39px!important;
+  filter:none!important;
+}
+.map-squid-marker::before{
+  content:""!important;
+  position:absolute!important;
+  box-sizing:border-box!important;
+  left:0!important;top:0!important;
+  width:78px!important;height:78px!important;
+  border-radius:50%!important;
+  border:1px solid rgba(64,168,255,.25)!important;
+  background:radial-gradient(circle at center,
+    rgba(20,139,255,.16) 0%,
+    rgba(20,139,255,.10) 36%,
+    rgba(20,139,255,.045) 55%,
+    rgba(20,139,255,0) 76%)!important;
+  box-shadow:0 0 14px rgba(25,143,255,.12)!important;
+  transform:none!important;
+}
+.map-squid-marker .squid-arrow{
+  position:absolute!important;
+  left:50%!important;top:50%!important;
+  width:24px!important;height:24px!important;
+  margin:0!important;
+  transform:translate(-50%,-50%)!important;
+  transform-origin:center!important;
+  display:block!important;
+}
+.map-squid-marker .earth-orb.blue-orb{
+  position:absolute!important;
+  left:0!important;top:0!important;
+  width:24px!important;height:24px!important;
+  box-sizing:border-box!important;
+  border-radius:50%!important;
+  overflow:visible!important;
+  border:1.5px solid rgba(205,239,255,.92)!important;
+  background:radial-gradient(circle at 34% 28%,
+    #8ee4ff 0%,
+    #30b8ff 13%,
+    #078cff 39%,
+    #0068df 68%,
+    #004db8 100%)!important;
+  box-shadow:
+    inset -4px -5px 6px rgba(0,31,100,.30),
+    inset 3px 3px 5px rgba(155,235,255,.28),
+    0 0 5px rgba(34,174,255,.85),
+    0 0 12px rgba(20,139,255,.58),
+    0 0 24px rgba(20,139,255,.28)!important;
+}
+.map-squid-marker .earth-orb.blue-orb::before{
+  content:""!important;
+  position:absolute!important;
+  left:50%!important;top:50%!important;
+  width:42px!important;height:42px!important;
+  transform:translate(-50%,-50%)!important;
+  border-radius:50%!important;
+  background:radial-gradient(circle,
+    rgba(35,170,255,.28) 0%,
+    rgba(35,170,255,.15) 35%,
+    rgba(35,170,255,.055) 57%,
+    rgba(35,170,255,0) 76%)!important;
+  z-index:-1!important;
+  animation:jarvisBlueBreathe 2.2s ease-in-out infinite!important;
+}
+.map-squid-marker .earth-orb-shine{
+  position:absolute!important;
+  left:5px!important;top:4px!important;
+  width:7px!important;height:4px!important;
+  border-radius:50%!important;
+  background:rgba(255,255,255,.58)!important;
+  transform:rotate(-28deg)!important;
+  filter:blur(.2px)!important;
+}
+.map-squid-marker .earth-orb-land{display:none!important}
+@keyframes jarvisBlueBreathe{
+  0%,100%{opacity:.58;transform:translate(-50%,-50%) scale(.88)}
+  50%{opacity:1;transform:translate(-50%,-50%) scale(1.12)}
+}
+@media (prefers-reduced-motion:reduce){
+  .map-squid-marker .earth-orb.blue-orb::before{animation:none!important}
+}
+
+/* ===== v6.13.5 cockpit speed emphasis ===== */
+body.nav-mode .nav-bottom-sheet>.map-info-strip{
+  grid-template-columns:minmax(0,1.22fr) minmax(112px,.92fr) minmax(0,.82fr)!important;
+  column-gap:6px!important;
+}
+body.nav-mode .map-info-strip .speed-card{
+  min-width:0!important;
+  padding-left:8px!important;
+  padding-right:2px!important;
+}
+body.nav-mode .map-info-strip .speed-card .k{
+  font-size:13px!important;
+  margin-bottom:2px!important;
+}
+body.nav-mode .map-info-strip .speed-card .nv{
+  font-size:clamp(68px,19vw,96px)!important;
+  line-height:.78!important;
+  letter-spacing:-.075em!important;
+  font-weight:900!important;
+  font-variant-numeric:tabular-nums!important;
+}
+body.nav-mode .map-info-strip .speed-card .nu{
+  font-size:14px!important;
+  margin-left:3px!important;
+  padding-bottom:5px!important;
+}
+@media(max-width:390px){
+  body.nav-mode .map-info-strip .speed-card .nv{font-size:clamp(64px,18vw,82px)!important}
+  body.nav-mode .nav-bottom-sheet>.map-info-strip{grid-template-columns:minmax(0,1.18fr) minmax(106px,.92fr) minmax(0,.8fr)!important}
+}
+
+/* ===== v6.13.6 speed meter: bigger, cleaner ===== */
+body.nav-mode .map-info-strip .speed-card .k{
+  display:none!important;
+}
+body.nav-mode .map-info-strip .speed-card{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:4px!important;
+  padding-left:4px!important;
+  padding-right:0!important;
+}
+body.nav-mode .map-info-strip .speed-card>div:last-child{
+  display:flex!important;
+  align-items:flex-end!important;
+  justify-content:center!important;
+  width:100%!important;
+}
+body.nav-mode .map-info-strip .speed-card .nv{
+  font-size:clamp(78px,22vw,108px)!important;
+  line-height:.76!important;
+  letter-spacing:-.08em!important;
+  font-weight:900!important;
+}
+body.nav-mode .map-info-strip .speed-card .nu{
+  font-size:14px!important;
+  margin-left:3px!important;
+  padding-bottom:7px!important;
+}
+@media(max-width:390px){
+  body.nav-mode .map-info-strip .speed-card .nv{
+    font-size:clamp(72px,21vw,96px)!important;
+  }
+}
+
+/* ===== v6.13.9: carry forward v6.13.7 orb size ===== */
+.map-squid-marker .squid-arrow{width:20px!important;height:20px!important}
+.map-squid-marker .earth-orb.blue-orb{width:20px!important;height:20px!important}
+.map-squid-marker .earth-orb.blue-orb::before{width:36px!important;height:36px!important}
+.map-squid-marker .earth-orb-shine{left:4px!important;top:3px!important;width:6px!important;height:3.5px!important}
+
+
+/* ===== v6.14.55 stable vehicle-ball state ===== */
+.map-squid-marker .earth-orb.blue-orb{
+  background:radial-gradient(circle at 35% 28%,#8be5ff 0 12%,#239cff 35%,#0867d8 72%,#044a9e 100%)!important;
+}
+.map-squid-marker .earth-orb.blue-orb::before{animation:none!important;opacity:.72!important;}
+.map-squid-marker.ball-warning .earth-orb.blue-orb::before{
+  width:42px!important;height:42px!important;
+  background:radial-gradient(circle,rgba(255,187,66,0) 44%,rgba(255,187,66,.78) 55%,rgba(255,187,66,0) 74%)!important;
+  opacity:1!important;
+}
+
+/* v6.14.56 */
