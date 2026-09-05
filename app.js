@@ -1357,10 +1357,17 @@ function jarvisRenderPreviewTurnArrows(){
   if(!navGoogleMap||navMode!=='ROUTE'||navSessionStarted||!routePreviewActive||!routeData)return;
   if(!jarvisMotionPreparePath())return;
   const events=jarvisTurnEvents();
-  for(const turn of events){
+  for(let ei=0;ei<events.length;ei++){
+    const turn=events[ei];
     const win=jarvisTurnArrowWindow(turn);
     if(!win)continue;
-    const pts=[],s0=win.startS,s1=win.endS;
+    // Keep consecutive maneuver arrows visually independent. Reserve a 6m blank gap at the
+    // midpoint between neighboring maneuver centers; never let two preview arrows merge.
+    let s0=win.startS,s1=win.endS;
+    const prev=events[ei-1],next=events[ei+1];
+    if(prev&&Number.isFinite(prev.s))s0=Math.max(s0,(prev.s+turn.s)/2+3);
+    if(next&&Number.isFinite(next.s))s1=Math.min(s1,(turn.s+next.s)/2-3);
+    const pts=[];
     if(!Number.isFinite(s0)||!Number.isFinite(s1)||s1<=s0)continue;
     const count=Math.max(10,Math.min(40,Math.ceil((s1-s0)/2)));
     for(let i=0;i<=count;i++){
@@ -1384,13 +1391,19 @@ function jarvisTurnArrowWindow(turn){
   // Hannan-road merge Tony identified during preview review.
   if(/KEEP/.test(String(turn.maneuver||'')))return null;
   const branch=(kind==='EXIT'||kind==='DIVERGE'||kind==='MERGE');
-  // v6.14.62 safety rollback: restore the compact v6.14.60 window exactly.
-  // v6.14.61's bend-span expansion could paint long/looping route sections on complex geometry.
-  const total=branch?26:19;
-  const before=total*(2/3),after=total*(1/3);
-  const anchor=Number.isFinite(Number(turn.s))?Number(turn.s):((Number(turn.startS)+Number(turn.endS))/2);
-  if(!Number.isFinite(anchor))return null;
-  return{startS:Math.max(0,anchor-before),endS:Math.min(jarvisMotion.total,anchor+after),maxDistance:branch?145:105,branch};
+  // v6.14.63 final white-line geometry: use the real bend span, but clamp it tightly around
+  // the maneuver center so complex interchanges cannot swallow long/looping route sections.
+  // Ratio means STRAIGHT LEG before bend : STRAIGHT LEG after bend = 2 : 1.
+  // Normal turn = 12m before + clamped bend + 6m after. Branch/merge = 16m + bend + 8m.
+  const center=Number(turn.s);
+  if(!Number.isFinite(center))return null;
+  const approach=branch?16:12,exit=approach/2;
+  let bendStart=Number(turn.startS),bendEnd=Number(turn.endS);
+  if(!Number.isFinite(bendStart))bendStart=center;
+  if(!Number.isFinite(bendEnd))bendEnd=center;
+  bendStart=Math.max(center-7,Math.min(center,bendStart));
+  bendEnd=Math.min(center+10,Math.max(center,bendEnd));
+  return{startS:Math.max(0,bendStart-approach),endS:Math.min(jarvisMotion.total,bendEnd+exit),maxDistance:branch?145:105,branch};
 }
 function jarvisUpdateTurnArrow(turn){
  if(!navGoogleMap||jarvisDeviationEscape||jarvisNavTrackingState==='REROUTING'){jarvisClearTurnArrow();return;}
@@ -2102,7 +2115,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.62-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.63-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
