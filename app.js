@@ -2115,7 +2115,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.75-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.76-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3624,19 +3624,30 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
     jarvisDeviationEvidence+=hardFar?2:1;
     const held=Date.now()-autoRerouteOffRouteSince;
 
-    // v6.14.55: a single noisy fix must not visibly flip the rider-facing state to OFF_ROUTE —
-    // require the same 2-fix minimum the escape/reroute decisions below already use. Before that,
-    // the state stays whatever it already was (very often just GPS noise that resolves on the
-    // next fix); the counters above still accumulate so a genuine departure is not delayed.
-    const confirmFixes=decisiveHeading?3:4;
+    // v6.14.76 PRE-DEVIATION DISPLAY: do not keep the rider ball frozen on the stale route
+    // while we are still gathering enough evidence for a network reroute. Two consistent good-GPS
+    // departure fixes may hand VISUAL ownership to free/GPS without declaring OFF_ROUTE yet.
+    // This preserves false-reroute protection while making a real missed turn visible immediately.
+    const preDeviationVisual=acc<=25&&speed>=8&&autoRerouteOffRouteFixes>=2&&
+      (decisiveHeading||headingWrong||lateral>Math.max(22,threshold*.68));
+    if(!jarvisDeviationEscape&&preDeviationVisual){
+      jarvisVisualGpsPriority=true;
+      jarvisVisualOnRouteFixes=0;
+    }
+
+    // v6.14.76: one stage earlier than v75, but still multi-fix. Strong heading disagreement
+    // confirms after 2 fixes; ordinary sustained departure after 3.
+    const confirmFixes=decisiveHeading?2:3;
     if(autoRerouteOffRouteFixes>=confirmFixes)jarvisNavTrackingState='OFF_ROUTE';
 
-    const escapeHold=decisiveHeading?1400:(headingWrong?1900:2600);
+    const escapeHold=decisiveHeading?850:(headingWrong?1200:1700);
     if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=confirmFixes&&held>=escapeHold)
       jarvisEnterDeviationEscape((headingWrong||decisiveHeading)?'HEADING':'OFF_ROUTE');
 
-    const fastReady=(hardFar||decisiveHeading||headingWrong)&&autoRerouteOffRouteFixes>=5&&held>=3000;
-    const steadyReady=autoRerouteOffRouteFixes>=6&&held>=4000;
+    const fastFixes=decisiveHeading?3:4;
+    const fastHold=decisiveHeading?1600:(headingWrong?2200:2600);
+    const fastReady=(hardFar||decisiveHeading||headingWrong)&&autoRerouteOffRouteFixes>=fastFixes&&held>=fastHold;
+    const steadyReady=autoRerouteOffRouteFixes>=5&&held>=3200;
     const rerouteReady=!settling&&(fastReady||steadyReady);
 
     if(jarvisDeviationEscape&&rerouteReady&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=AUTO_REROUTE_COOLDOWN_MS)
@@ -3645,7 +3656,13 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
       jarvisAutoReroute('HEADING');
   }else if(lateral<8&&mismatch<35){
     jarvisNavTrackingState='TRACKING';
-    if(!jarvisDeviationEscape)jarvisResetAutoRerouteWatch();
+    if(!jarvisDeviationEscape){
+      // A pre-deviation visual handoff that resolves as noise/temporary geometry must return
+      // cleanly to route rendering without waiting for a separate state machine.
+      jarvisVisualGpsPriority=false;
+      jarvisVisualOnRouteFixes=0;
+      jarvisResetAutoRerouteWatch();
+    }
   }else if(!jarvisDeviationEscape){
     // v6.14.55: ambiguous fix — neither clearly off nor clearly back on. Decay instead of
     // freezing the counter, so isolated noise cannot silently accumulate toward an escape/reroute
