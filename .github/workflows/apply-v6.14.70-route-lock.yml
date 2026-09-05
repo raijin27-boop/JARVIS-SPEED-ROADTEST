@@ -1,0 +1,31 @@
+name: Apply v6.14.70 hard route lock
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-v6.14.70-route-lock.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Apply route lock
+        run: python3 tools/apply-v61470-route-lock.py
+      - name: Syntax and structural gates
+        run: |
+          set -euo pipefail
+          node --check app.js
+          grep -Fq 'const hardRouteLock=' app.js
+          grep -Fq 'return{lat:rp.lat,lng:rp.lng}' app.js
+          grep -Fq 'v6.14.70-ROADTEST-20260906T0105JST' index.html
+      - name: Commit runtime
+        run: |
+          git config user.name jarvis-speed-bot
+          git config user.email actions@users.noreply.github.com
+          git add app.js index.html
+          git commit -m 'fix: hard-lock tracking marker to route v6.14.70'
+          git push origin HEAD:main
