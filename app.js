@@ -76,6 +76,7 @@ let jarvisNavTrackingState='TRACKING'; // TRACKING / UNCERTAIN / OFF_ROUTE / RER
 let jarvisDeviationEscape=false;       // true: reroute state says old route is stale
 let jarvisVisualGpsPriority=false;       // display-only: GPS owns squid temporarily; MUST NOT trigger reroute state
 let jarvisVisualOnRouteFixes=0;
+let jarvisVisualGpsPriorityStartedAt=0; // v6.14.79 smooth GPS visual handoff
 let jarvisPreDeviationVisualFixes=0; // v6.14.77 early visual-only departure evidence
 let jarvisDeviationEvidence=0;
 let jarvisDeviationStartedAt=0;
@@ -730,6 +731,15 @@ function jarvisFreeMotionStart(){
     }else if(acc<=15) gain=dist>24?.24:(dist>10?.17:.11);
     else if(acc<=25) gain=dist>26?.21:(dist>11?.15:.095);
     else gain=dist>28?.18:(dist>12?.13:.085);
+  }else if(jarvisVisualGpsPriority){
+    // v6.14.79 SMOOTH VISUAL HANDOFF: v78 correctly bypassed stale route projection, but the
+    // normal free-motion catch-up gain (.40 above 30m) then made a 30-50m visual teleport.
+    // During visual-only departure, converge continuously from the last route-rendered position
+    // toward live GPS before OFF_ROUTE takes over. This changes DISPLAY only, never reroute evidence.
+    const visualMs=jarvisVisualGpsPriorityStartedAt?Date.now()-jarvisVisualGpsPriorityStartedAt:9999;
+    if(visualMs<700)gain=acc<=15?.060:acc<=25?.052:.045;
+    else if(visualMs<1500)gain=acc<=15?(dist>25?.095:.075):(dist>25?.080:.065);
+    else gain=acc<=15?(dist>28?.14:.10):(dist>28?.12:.085);
   }else{
     gain=dist>30?.40:(dist>10?.24:.12);
   }
@@ -2121,7 +2131,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.78-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.79-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3637,6 +3647,7 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
   if(!jarvisDeviationEscape&&visualDeparture){
     jarvisPreDeviationVisualFixes++;
     if(jarvisPreDeviationVisualFixes>=2){
+      if(!jarvisVisualGpsPriority)jarvisVisualGpsPriorityStartedAt=Date.now();
       jarvisVisualGpsPriority=true;
       jarvisVisualOnRouteFixes=0;
     }
@@ -3675,6 +3686,7 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
       // A pre-deviation visual handoff that resolves as noise/temporary geometry must return
       // cleanly to route rendering without waiting for a separate state machine.
       jarvisVisualGpsPriority=false;
+      jarvisVisualGpsPriorityStartedAt=0;
       jarvisVisualOnRouteFixes=0;
       jarvisResetAutoRerouteWatch();
     }
