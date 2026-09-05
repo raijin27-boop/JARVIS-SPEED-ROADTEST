@@ -679,16 +679,13 @@ function jarvisTrackingDisplayTargetV665(lat,lng){
   const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:15;
   const pr=jarvisMotionProject(lat,lng,acc);
   if(!pr||!Number.isFinite(pr.distance))return{lat,lng};
-  const routeH=jarvisMotionHeadingAtS(pr.s),travel=jarvisTravelHeading();
-  const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,routeH):0;
-  if(Number(currentSpeedKmh)>=8&&mismatch>72)return{lat,lng};
-  const maxSnap=Math.max(68,Math.min(92,64+acc*1.35));
+  // v6.14.70 ROUTE LOCK: while navigation state is TRACKING, the rider-facing position
+  // belongs to the selected route. Raw GPS remains independent for off-route evidence/rerouting.
+  // Do not release the marker merely because GPS heading temporarily disagrees at a bend.
+  const maxSnap=Math.max(105,Math.min(120,96+acc*1.25));
   if(pr.distance>maxSnap)return{lat,lng};
   const rp=jarvisMotionPointAtS(pr.s);if(!rp)return{lat,lng};
-  // v6.14.66: consumer-nav hard adhesion. While TRACKING the cursor is ON the route.
-  let strength=pr.distance<=45?1:pr.distance<=65?.985:.94;
-  if(acc>35)strength=Math.min(strength,.92);
-  return{lat:lat+(rp.lat-lat)*strength,lng:lng+(rp.lng-lng)*strength};
+  return{lat:rp.lat,lng:rp.lng};
 }
 
 function jarvisFreeMotionStart(){
@@ -704,7 +701,9 @@ function jarvisFreeMotionStart(){
   const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:99;
   const isolated=Date.now()<jarvisDeviationGpsIsolationUntil;
   const predictAge=isolated?.25:(escape?.65:1.35), predictCap=isolated?3:(escape?10:25);
-  if(jarvisFreeMotion.speedMps>1&&Number.isFinite(jarvisFreeMotion.targetHeading)&&age<predictAge)
+  const hardRouteLock=!!(navSessionStarted&&navMode==='ROUTE'&&jarvisNavTrackingState==='TRACKING'&&!jarvisDeviationEscape&&!jarvisVisualGpsPriority);
+  // Never push the displayed marker forward from GPS heading while hard-locked to the route.
+  if(!hardRouteLock&&jarvisFreeMotion.speedMps>1&&Number.isFinite(jarvisFreeMotion.targetHeading)&&age<predictAge)
     d=jarvisFreeForward(d.lat,d.lng,jarvisFreeMotion.targetHeading,Math.min(predictCap,jarvisFreeMotion.speedMps*age));
   const dist=haversine({latitude:jarvisFreeMotion.displayLat,longitude:jarvisFreeMotion.displayLon},{latitude:d.lat,longitude:d.lng});
   let gain;
@@ -766,6 +765,11 @@ function jarvisFreeMotionStart(){
     jarvisFreeMotion.displayLat+=moveLat;jarvisFreeMotion.displayLon+=moveLng;
     if(Number.isFinite(jarvisFreeMotion.targetHeading))
       jarvisFreeMotion.displayHeading=smoothHeading(jarvisFreeMotion.displayHeading,jarvisFreeMotion.targetHeading,escape?(acc<=20?.12:.09):(jarvisFreeMotion.speedMps>2?.08:.055));
+  }
+  // v6.14.70: smoothing may lag behind the route target; finish each TRACKING frame exactly
+  // on the selected polyline. OFF_ROUTE/REROUTING bypass this and keep real GPS authority.
+  if(hardRouteLock&&Number.isFinite(d?.lat)&&Number.isFinite(d?.lng)){
+    jarvisFreeMotion.displayLat=d.lat;jarvisFreeMotion.displayLon=d.lng;
   }
   const mh=headingUpMode&&Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:0;
   navSquidOverlay?.setPosition(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,headingUpMode?0:(jarvisFreeMotion.displayHeading||0));
@@ -2093,7 +2097,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.67-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.70-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
