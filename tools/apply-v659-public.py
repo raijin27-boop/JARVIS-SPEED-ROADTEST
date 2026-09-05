@@ -37,6 +37,10 @@ render_anchor="function jarvisRenderRoute(){\n  const colors=['#238cff','#72d2ff
 if 'setTimeout(jarvisRenderPreviewTurnArrows,0);' not in s:
     if render_anchor not in s: raise SystemExit('missing route-render anchor')
     s=s.replace(render_anchor,"function jarvisRenderRoute(){\n  setTimeout(jarvisRenderPreviewTurnArrows,0);\n  const colors=['#238cff','#72d2ff','#8ee6a8'];",1)
+hide_anchor="function jarvisHideRouteLines(){\n  jarvisClearRouteLabels();"
+if 'function jarvisHideRouteLines(){\n  jarvisClearRouteLabels();\n  jarvisClearPreviewTurnArrows?.();' not in s:
+    if hide_anchor not in s: raise SystemExit('missing hide-route anchor')
+    s=s.replace(hide_anchor,"function jarvisHideRouteLines(){\n  jarvisClearRouteLabels();\n  jarvisClearPreviewTurnArrows?.();",1)
 s=s.replace("'v6.14.58-ROADTEST-dev'","'v6.14.59-ROADTEST-dev'")
 p.write_text(s)
 idx=Path('index.html')
