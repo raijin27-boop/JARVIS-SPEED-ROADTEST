@@ -1,0 +1,8 @@
+JARVIS SPEED ROADTEST LATEST BASELINE
+Version: v6.14.75 REROUTE HANDOFF
+Recorded: 2026-09-06 JST
+Runtime commit: f894f600da87d891bb32f311a0d8efeb43e7fff4
+Deployment trigger commit: 60caf0f02ca8b844421cb6a95c3739f50339915b
+Pages deploy run: 33979994659 (success)
+Purpose: preserve the latest known-good road-test baseline where reroute handoff no longer pulls the vehicle ball backward after new-route display.
+Older baselines/rollback points remain preserved; this file does not replace or delete them.
