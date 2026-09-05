@@ -768,17 +768,22 @@ function jarvisFreeMotionStart(){
     if(Number.isFinite(jarvisFreeMotion.targetHeading))
       jarvisFreeMotion.displayHeading=smoothHeading(jarvisFreeMotion.displayHeading,jarvisFreeMotion.targetHeading,escape?(acc<=20?.12:.09):(jarvisFreeMotion.speedMps>2?.08:.055));
   }
-  // v6.14.72: never overwrite the interpolated display position with the newest route target.
-  // The marker stays strongly route-biased but moves there continuously frame-by-frame.
+  // v6.14.74 SAFE RENDER LOCK: v73 already made displayS continuous. While genuinely TRACKING,
+  // render the rider directly from that continuous route-progress point, so the second lat/lng
+  // low-pass above cannot cut inside bends or visibly trail beside the route. Crucially, DO NOT
+  // write this route point back into jarvisFreeMotion: its GPS-smoothed state remains independent
+  // and ready to take over immediately after confirmed OFF_ROUTE/REROUTING.
+  const renderRouteLocked=!!(navSessionStarted&&navMode==='ROUTE'&&jarvisNavTrackingState==='TRACKING'&&!jarvisDeviationEscape&&!jarvisVisualGpsPriority&&Number.isFinite(jarvisMotion.displayS));
+  const renderRoutePose=renderRouteLocked?jarvisMotionPointAtS(jarvisMotion.displayS):null;
+  const renderLat=renderRoutePose?.lat ?? jarvisFreeMotion.displayLat;
+  const renderLon=renderRoutePose?.lng ?? jarvisFreeMotion.displayLon;
   const mh=headingUpMode&&Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:0;
-  navSquidOverlay?.setPosition(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,headingUpMode?0:(jarvisFreeMotion.displayHeading||0));
+  navSquidOverlay?.setPosition(renderLat,renderLon,headingUpMode?0:(jarvisFreeMotion.displayHeading||0));
   if(now-jarvisFreeMotion.lastCameraAt>=70){
     jarvisFreeMotion.lastCameraAt=now;
     const camHeading=Number.isFinite(jarvisFreeMotion.displayHeading)?jarvisFreeMotion.displayHeading:(jarvisTravelHeading()||0);
-    // Preserve the v6.14.8 adaptive zoom policy, but apply it to the route-independent
-    // display location instead of the route-projected pose.
     const displayZoom=(navSessionStarted&&navMode==='ROUTE')?jarvisAdaptiveNavZoom(jarvisCurrentGuidanceEvent()):18;
-    const cc=jarvisCameraCenterAhead(jarvisFreeMotion.displayLat,jarvisFreeMotion.displayLon,camHeading,displayZoom);
+    const cc=jarvisCameraCenterAhead(renderLat,renderLon,camHeading,displayZoom);
     jarvisFollowCameraUpdate(cc.lat,cc.lng,camHeading,displayZoom,now,false);
   }
  };jarvisFreeMotion.raf=requestAnimationFrame(tick);
@@ -2096,7 +2101,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.73-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.74-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
