@@ -1384,11 +1384,16 @@ function jarvisTurnArrowWindow(turn){
   // Hannan-road merge Tony identified during preview review.
   if(/KEEP/.test(String(turn.maneuver||'')))return null;
   const branch=(kind==='EXIT'||kind==='DIVERGE'||kind==='MERGE');
-  const total=branch?26:19;
-  const before=total*(2/3),after=total*(1/3);
-  const anchor=Number.isFinite(Number(turn.s))?Number(turn.s):((Number(turn.startS)+Number(turn.endS))/2);
-  if(!Number.isFinite(anchor))return null;
-  return{startS:Math.max(0,anchor-before),endS:Math.min(jarvisMotion.total,anchor+after),maxDistance:branch?145:105,branch};
+  // v6.14.61: 2:1 means the actual legs around the bend: approach=2, exit=1.
+  // The arrow therefore follows the bend and its arrowhead lands on the road AFTER the turn.
+  const approach=branch?16:12;
+  const exit=approach/2;
+  let bendStart=Number(turn.startS),bendEnd=Number(turn.endS);
+  if(!Number.isFinite(bendStart))bendStart=Number(turn.s);
+  if(!Number.isFinite(bendEnd))bendEnd=Number(turn.s);
+  if(!Number.isFinite(bendStart)||!Number.isFinite(bendEnd))return null;
+  if(bendEnd<bendStart){const t=bendStart;bendStart=bendEnd;bendEnd=t;}
+  return{startS:Math.max(0,bendStart-approach),endS:Math.min(jarvisMotion.total,bendEnd+exit),maxDistance:branch?145:105,branch};
 }
 function jarvisUpdateTurnArrow(turn){
  if(!navGoogleMap||jarvisDeviationEscape||jarvisNavTrackingState==='REROUTING'){jarvisClearTurnArrow();return;}
@@ -2100,7 +2105,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.60-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.61-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
