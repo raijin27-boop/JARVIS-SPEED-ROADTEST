@@ -77,6 +77,7 @@ let jarvisDeviationEscape=false;       // true: reroute state says old route is 
 let jarvisVisualGpsPriority=false;       // display-only: GPS owns squid temporarily; MUST NOT trigger reroute state
 let jarvisVisualOnRouteFixes=0;
 let jarvisVisualGpsPriorityStartedAt=0; // v6.14.79 smooth GPS visual handoff
+let jarvisDisplayRouteWeight=1; // v6.14.80 unified display: 1=route, 0=live GPS
 let jarvisPreDeviationVisualFixes=0; // v6.14.77 early visual-only departure evidence
 let jarvisDeviationEvidence=0;
 let jarvisDeviationStartedAt=0;
@@ -679,23 +680,47 @@ function jarvisFollowCameraUpdate(lat,lng,heading,zoom,now,fast=false){
 
 // v6.14.65 Google-style route adhesion for DISPLAY ONLY.
 function jarvisTrackingDisplayTargetV665(lat,lng){
-  // v6.14.78 VISUAL PRIORITY BYPASS: once visual GPS ownership is granted, do not feed
-  // a route-projected target back into freeMotion. v76/v77 released the renderer, but this
-  // helper still transformed the underlying target onto the stale route, so the ball remained
-  // visibly pulled toward it until deviationEscape/OFF_ROUTE. GPS visual ownership must mean
-  // raw accepted GPS target ownership end-to-end.
-  if(!navSessionStarted||navMode!=='ROUTE'||jarvisVisualGpsPriority||jarvisDeviationEscape||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')return{lat,lng};
-  // v6.14.73 PROGRESS POSE: TRACKING display is derived from the already stabilized route
-  // progress (displayS), NOT from re-projecting each discrete GPS target every animation frame.
-  // jarvisMotionAcceptFix still projects the accepted GPS fix and independently feeds
-  // off-route/reroute evidence; this changes only rider-facing marker position ownership.
-  if(Number.isFinite(jarvisMotion.displayS)){
-    const rp=jarvisMotionPointAtS(jarvisMotion.displayS);
-    if(rp)return{lat:rp.lat,lng:rp.lng};
+  if(!navSessionStarted||navMode!=='ROUTE'||!Number.isFinite(jarvisMotion.displayS)){
+    jarvisDisplayRouteWeight=0;
+    return{lat,lng};
   }
-  // Before the first stable route-progress fix exists, keep the free/GPS pose rather than
-  // snapping to an arbitrary route segment. Once displayS initializes, route progress owns it.
-  return{lat,lng};
+  const rp=jarvisMotionPointAtS(jarvisMotion.displayS);
+  if(!rp){jarvisDisplayRouteWeight=0;return{lat,lng};}
+
+  // v6.14.80 UNIFIED DISPLAY ARCHITECTURE
+  // There is no longer a binary "route marker" -> "GPS marker" ownership switch.
+  // The only rider-facing display target continuously blends the stabilized route-progress
+  // pose with live accepted GPS. Raw GPS remains completely independent for OFF_ROUTE/reroute.
+  // When the rider turns away, heading disagreement reduces route affinity before lateral error
+  // grows, so the ball starts leaving the route immediately instead of freezing then teleporting.
+  const acc=Math.max(3,Math.min(35,Number(jarvisFreeMotion.accuracy)||12));
+  const speed=Math.max(0,Number(currentSpeedKmh)||0);
+  const lateral=haversine({latitude:+lat,longitude:+lng},{latitude:rp.lat,longitude:rp.lng});
+  const routeHeading=jarvisMotionHeadingAtS(jarvisMotion.displayS);
+  const travel=jarvisTravelHeading();
+  const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,routeHeading):0;
+
+  const latStart=Math.max(7,acc*.70),latEnd=Math.max(26,acc*2.0);
+  const lateralDeparture=Math.max(0,Math.min(1,(lateral-latStart)/Math.max(8,latEnd-latStart)));
+  const headingDeparture=speed>=7?Math.max(0,Math.min(1,(mismatch-26)/66)):0;
+  let departure=Math.max(lateralDeparture,headingDeparture*.92);
+  // visualGpsPriority is evidence that departure is real, but it no longer causes a hard switch.
+  if(jarvisVisualGpsPriority)departure=Math.max(departure,.82);
+  if(jarvisDeviationEscape||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')departure=1;
+
+  // Smoothstep gives high adhesion around the route while making release continuous.
+  const sm=departure*departure*(3-2*departure);
+  let wanted=1-sm;
+  if(lateral<=Math.max(5,acc*.55)&&mismatch<24)wanted=1;
+  if(jarvisDeviationEscape)wanted=0;
+
+  // Release quickly when evidence rises; reacquire more cautiously when returning to the route.
+  const k=wanted<jarvisDisplayRouteWeight ? .58 : .20;
+  jarvisDisplayRouteWeight += (wanted-jarvisDisplayRouteWeight)*k;
+  jarvisDisplayRouteWeight=Math.max(0,Math.min(1,jarvisDisplayRouteWeight));
+
+  const w=jarvisDisplayRouteWeight;
+  return{lat:rp.lat*w+(+lat)*(1-w),lng:rp.lng*w+(+lng)*(1-w)};
 }
 
 function jarvisFreeMotionStart(){
@@ -731,15 +756,9 @@ function jarvisFreeMotionStart(){
     }else if(acc<=15) gain=dist>24?.24:(dist>10?.17:.11);
     else if(acc<=25) gain=dist>26?.21:(dist>11?.15:.095);
     else gain=dist>28?.18:(dist>12?.13:.085);
-  }else if(jarvisVisualGpsPriority){
-    // v6.14.79 SMOOTH VISUAL HANDOFF: v78 correctly bypassed stale route projection, but the
-    // normal free-motion catch-up gain (.40 above 30m) then made a 30-50m visual teleport.
-    // During visual-only departure, converge continuously from the last route-rendered position
-    // toward live GPS before OFF_ROUTE takes over. This changes DISPLAY only, never reroute evidence.
-    const visualMs=jarvisVisualGpsPriorityStartedAt?Date.now()-jarvisVisualGpsPriorityStartedAt:9999;
-    if(visualMs<700)gain=acc<=15?.060:acc<=25?.052:.045;
-    else if(visualMs<1500)gain=acc<=15?(dist>25?.095:.075):(dist>25?.080:.065);
-    else gain=acc<=15?(dist>28?.14:.10):(dist>28?.12:.085);
+  }else if(navSessionStarted&&navMode==='ROUTE'){
+    // v6.14.80: one moderate continuous display response. No mode-change catch-up burst.
+    gain=acc<=15?(dist>30?.14:(dist>10?.105:.075)):(dist>30?.12:(dist>10?.09:.065));
   }else{
     gain=dist>30?.40:(dist>10?.24:.12);
   }
@@ -790,7 +809,7 @@ function jarvisFreeMotionStart(){
   // low-pass above cannot cut inside bends or visibly trail beside the route. Crucially, DO NOT
   // write this route point back into jarvisFreeMotion: its GPS-smoothed state remains independent
   // and ready to take over immediately after confirmed OFF_ROUTE/REROUTING.
-  const renderRouteLocked=!!(navSessionStarted&&navMode==='ROUTE'&&jarvisNavTrackingState==='TRACKING'&&!jarvisDeviationEscape&&!jarvisVisualGpsPriority&&Number.isFinite(jarvisMotion.displayS));
+  const renderRouteLocked=false; // v6.14.80 single display owner; route affinity is blended upstream
   const renderRoutePose=renderRouteLocked?jarvisMotionPointAtS(jarvisMotion.displayS):null;
   const renderLat=renderRoutePose?.lat ?? jarvisFreeMotion.displayLat;
   const renderLon=renderRoutePose?.lng ?? jarvisFreeMotion.displayLon;
@@ -2131,7 +2150,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.79-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.80-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -2484,7 +2503,7 @@ async function resetTrip(){
   if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null}
   running=false;starting=false;if(timerId)clearInterval(timerId);timerId=null;
   startTime=null;elapsedBefore=0;lastPos=null;totalDistanceM=0;maxSpeedKmh=0;currentSpeedKmh=0;lastAcceptedSpeed=0;resumeGuardUntil=0;goodSamplesAfterResume=0;
-  currentHeading=null;headingSource='--';courseLastFix=null;courseLastAt=0;jarvisMotionReset();
+  currentHeading=null;headingSource='--';courseLastFix=null;courseLastAt=0;jarvisMotionReset();jarvisDisplayRouteWeight=0;
   $('speed').textContent='0'; if($('navSpeed')) $('navSpeed').textContent='0'; setTextIf('landSpeed','0'); $('maxSpeed').textContent='0';$('avgSpeed').textContent='0';$('distance').textContent='0.00';$('elapsed').textContent='00:00';$('accuracy').textContent='GPS精度 -- m';
   $('diff').textContent='--';$('errorRate').textContent='--';$('status').textContent='待機中';$('status').className='status';syncLandscapeStatus();$('startBtn').disabled=false;$('stopBtn').disabled=true;
   setDiag('gpsState','未開始','');diagMsg('STARTを押すと、GPS取得を試します。');await jarvisSyncWakeLock();refreshDiagnostics();updateNav();
