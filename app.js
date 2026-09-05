@@ -2093,7 +2093,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.66-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.67-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3568,12 +3568,16 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
   // with good GPS, looser with weak GPS) instead of one fixed 20m value, so a confidently-good fix
   // can register a departure sooner than a noisy one — merged in from the fast-detector overlay
   // that was previously a separate, uncoordinated code path.
-  const threshold=settling?Math.max(68,AUTO_REROUTE_DISTANCE_M):Math.max(55,Math.min(72,46+acc*1.15));
-  const headingWrong=speed>=10&&lateral>24&&mismatch>88;
+  // v6.14.67 REROUTE: stronger real-deviation response without returning to one-fix triggers.
+  // Good GPS may react sooner; weak GPS keeps a wider corridor. A missed turn can be confirmed
+  // from strong heading disagreement before lateral distance grows to the old 55-72m threshold.
+  const threshold=settling?Math.max(58,AUTO_REROUTE_DISTANCE_M):Math.max(42,Math.min(60,34+acc*1.05));
+  const headingWrong=speed>=8&&lateral>14&&mismatch>78;
+  const decisiveHeading=acc<=25&&speed>=10&&lateral>9&&mismatch>108;
   const clearlyFar=lateral>threshold;
-  const hardFar=lateral>Math.max(92,threshold+18);
+  const hardFar=lateral>Math.max(75,threshold+16);
 
-  if(clearlyFar||headingWrong){
+  if(clearlyFar||headingWrong||decisiveHeading){
     if(!autoRerouteOffRouteSince)autoRerouteOffRouteSince=Date.now();
     autoRerouteOffRouteFixes++;
     jarvisDeviationEvidence+=hardFar?2:1;
@@ -3583,14 +3587,15 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
     // require the same 2-fix minimum the escape/reroute decisions below already use. Before that,
     // the state stays whatever it already was (very often just GPS noise that resolves on the
     // next fix); the counters above still accumulate so a genuine departure is not delayed.
-    if(autoRerouteOffRouteFixes>=5)jarvisNavTrackingState='OFF_ROUTE';
+    const confirmFixes=decisiveHeading?3:4;
+    if(autoRerouteOffRouteFixes>=confirmFixes)jarvisNavTrackingState='OFF_ROUTE';
 
-    const escapeHold=headingWrong?2800:3600;
-    if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=5&&held>=escapeHold)
-      jarvisEnterDeviationEscape(headingWrong?'HEADING':'OFF_ROUTE');
+    const escapeHold=decisiveHeading?1400:(headingWrong?1900:2600);
+    if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=confirmFixes&&held>=escapeHold)
+      jarvisEnterDeviationEscape((headingWrong||decisiveHeading)?'HEADING':'OFF_ROUTE');
 
-    const fastReady=(hardFar||headingWrong)&&autoRerouteOffRouteFixes>=6&&held>=4200;
-    const steadyReady=autoRerouteOffRouteFixes>=7&&held>=5200;
+    const fastReady=(hardFar||decisiveHeading||headingWrong)&&autoRerouteOffRouteFixes>=5&&held>=3000;
+    const steadyReady=autoRerouteOffRouteFixes>=6&&held>=4000;
     const rerouteReady=!settling&&(fastReady||steadyReady);
 
     if(jarvisDeviationEscape&&rerouteReady&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=AUTO_REROUTE_COOLDOWN_MS)
