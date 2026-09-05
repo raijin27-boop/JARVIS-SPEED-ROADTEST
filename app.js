@@ -1385,6 +1385,7 @@ function jarvisTurnArrowWindow(turn){
   if(/KEEP/.test(String(turn.maneuver||'')))return null;
   const branch=(kind==='EXIT'||kind==='DIVERGE'||kind==='MERGE');
   // v6.14.62 safety rollback: restore the compact v6.14.60 window exactly.
+  // v6.14.61's bend-span expansion could paint long/looping route sections on complex geometry.
   const total=branch?26:19;
   const before=total*(2/3),after=total*(1/3);
   const anchor=Number.isFinite(Number(turn.s))?Number(turn.s):((Number(turn.startS)+Number(turn.endS))/2);
