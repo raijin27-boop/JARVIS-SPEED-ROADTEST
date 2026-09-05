@@ -673,6 +673,23 @@ function jarvisFollowCameraUpdate(lat,lng,heading,zoom,now,fast=false){
   }catch(e){}
 }
 
+// v6.14.65 Google-style route adhesion for DISPLAY ONLY.
+function jarvisTrackingDisplayTargetV665(lat,lng){
+  if(!navSessionStarted||navMode!=='ROUTE'||jarvisDeviationEscape||jarvisVisualGpsPriority||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')return{lat,lng};
+  const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:15;
+  const pr=jarvisMotionProject(lat,lng,acc);
+  if(!pr||!Number.isFinite(pr.distance))return{lat,lng};
+  const routeH=jarvisMotionHeadingAtS(pr.s),travel=jarvisTravelHeading();
+  const mismatch=Number.isFinite(travel)?jarvisHeadingMismatch(travel,routeH):0;
+  if(Number(currentSpeedKmh)>=8&&mismatch>72)return{lat,lng};
+  const maxSnap=Math.max(30,Math.min(58,28+acc*1.15));
+  if(pr.distance>maxSnap)return{lat,lng};
+  const rp=jarvisMotionPointAtS(pr.s);if(!rp)return{lat,lng};
+  let strength=pr.distance<=18?.985:pr.distance<=30?.94:pr.distance<=42?.82:.68;
+  if(acc>28)strength=Math.min(strength,.80);
+  return{lat:lat+(rp.lat-lat)*strength,lng:lng+(rp.lng-lng)*strength};
+}
+
 function jarvisFreeMotionStart(){
  if(jarvisFreeMotion.raf)return;jarvisFreeMotion.lastFrameAt=performance.now();
  const tick=now=>{jarvisFreeMotion.raf=requestAnimationFrame(tick);
@@ -680,7 +697,7 @@ function jarvisFreeMotionStart(){
   // Route projection no longer owns the vehicle marker; this engine does.
   if(!navGoogleMap||!navMapFollow||!Number.isFinite(jarvisFreeMotion.targetLat))return;
   const dt=Math.max(.001,Math.min(.08,(now-jarvisFreeMotion.lastFrameAt)/1000));jarvisFreeMotion.lastFrameAt=now;
-  let d=(!navSessionStarted?jarvisFreeCorridorTargetSafe(jarvisFreeMotion.targetLat,jarvisFreeMotion.targetLon):{lat:jarvisFreeMotion.targetLat,lng:jarvisFreeMotion.targetLon}),age=Math.max(0,(now-jarvisFreeMotion.lastFixAt)/1000);
+  let d=(!navSessionStarted?jarvisFreeCorridorTargetSafe(jarvisFreeMotion.targetLat,jarvisFreeMotion.targetLon):jarvisTrackingDisplayTargetV665(jarvisFreeMotion.targetLat,jarvisFreeMotion.targetLon)),age=Math.max(0,(now-jarvisFreeMotion.lastFixAt)/1000);
   const escape=!!(jarvisDeviationEscape||jarvisVisualGpsPriority);
   // v6.13.11: while off-route, real GPS is the authority. Prediction only bridges a short gap.
   const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:99;
@@ -1790,7 +1807,8 @@ function diagMsg(text,kind=''){const el=$('diagMessage');el.textContent=text;el.
 // could drop the wake lock while navSessionStarted was still true. There is now exactly one
 // "wanted" predicate, one sentinel, one reacquire loop, and one best-effort fallback.
 function jarvisWakeWanted(){
-  return document.visibilityState==='visible'&&(navSessionStarted||running);
+  // v6.14.65: desired wake state survives visibility transitions; acquisition remains visible-only.
+  return !!(navSessionStarted||running);
 }
 
 // Best-effort iOS Safari/PWA mitigation for known Screen Wake Lock gaps (the API is supported, but
@@ -2074,7 +2092,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.58-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.65-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3549,10 +3567,10 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
   // with good GPS, looser with weak GPS) instead of one fixed 20m value, so a confidently-good fix
   // can register a departure sooner than a noisy one — merged in from the fast-detector overlay
   // that was previously a separate, uncoordinated code path.
-  const threshold=settling?Math.max(20,AUTO_REROUTE_DISTANCE_M):Math.max(12,Math.min(20,7+acc*.65));
-  const headingWrong=speed>=6&&lateral>2&&mismatch>52;
+  const threshold=settling?Math.max(34,AUTO_REROUTE_DISTANCE_M):Math.max(24,Math.min(36,16+acc*.85));
+  const headingWrong=speed>=8&&lateral>10&&mismatch>70;
   const clearlyFar=lateral>threshold;
-  const hardFar=lateral>Math.max(24,threshold+7);
+  const hardFar=lateral>Math.max(44,threshold+10);
 
   if(clearlyFar||headingWrong){
     if(!autoRerouteOffRouteSince)autoRerouteOffRouteSince=Date.now();
@@ -3564,17 +3582,14 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
     // require the same 2-fix minimum the escape/reroute decisions below already use. Before that,
     // the state stays whatever it already was (very often just GPS noise that resolves on the
     // next fix); the counters above still accumulate so a genuine departure is not delayed.
-    if(autoRerouteOffRouteFixes>=2)jarvisNavTrackingState='OFF_ROUTE';
+    if(autoRerouteOffRouteFixes>=3)jarvisNavTrackingState='OFF_ROUTE';
 
-    const escapeHold=headingWrong?260:450;
-    if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=2&&held>=escapeHold)
+    const escapeHold=headingWrong?1200:1600;
+    if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=3&&held>=escapeHold)
       jarvisEnterDeviationEscape(headingWrong?'HEADING':'OFF_ROUTE');
 
-    // Two readiness paths under one decision: fast (2 fixes + 550ms) for a decisively-far or
-    // heading-wrong fix, steady (3 fixes + 1200ms) for borderline lateral evidence that isn't yet
-    // decisive either way. Never active during the post-commit settle window.
-    const fastReady=(hardFar||headingWrong)&&autoRerouteOffRouteFixes>=2&&held>=550;
-    const steadyReady=autoRerouteOffRouteFixes>=AUTO_REROUTE_MIN_FIXES&&held>=AUTO_REROUTE_HOLD_MS;
+    const fastReady=(hardFar||headingWrong)&&autoRerouteOffRouteFixes>=4&&held>=2200;
+    const steadyReady=autoRerouteOffRouteFixes>=5&&held>=3200;
     const rerouteReady=!settling&&(fastReady||steadyReady);
 
     if(jarvisDeviationEscape&&rerouteReady&&!autoRerouteBusy&&Date.now()-autoRerouteLastAt>=AUTO_REROUTE_COOLDOWN_MS)
