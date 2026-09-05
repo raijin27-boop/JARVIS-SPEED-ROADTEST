@@ -41,9 +41,6 @@ old="""    if(autoRerouteOffRouteFixes>=3)jarvisNavTrackingState='OFF_ROUTE';
     if(!jarvisDeviationEscape&&autoRerouteOffRouteFixes>=3&&held>=escapeHold)
       jarvisEnterDeviationEscape(headingWrong?'HEADING':'OFF_ROUTE');
 
-    // v6.14.65: reroute is deliberately slower than visual snapping. A genuine missed turn still
-    // accumulates quickly, but ordinary GPS drift must persist for several fixes before a network
-    // request is allowed.
     const fastReady=(hardFar||headingWrong)&&autoRerouteOffRouteFixes>=4&&held>=2200;
     const steadyReady=autoRerouteOffRouteFixes>=5&&held>=3200;
 """
