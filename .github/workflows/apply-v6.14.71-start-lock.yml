@@ -1,0 +1,32 @@
+name: Apply v6.14.71 START LOCK + SUPER ADHESION
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/apply-v6.14.71-start-lock.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Apply start lock
+        run: python3 tools/apply-v61471-start-lock.py
+      - name: Syntax and structural gates
+        run: |
+          set -euo pipefail
+          node --check app.js
+          grep -Fq 'jarvisStartGuardAt' app.js
+          grep -Fq 'jarvisStartMovingFixes<4' app.js
+          grep -Fq 'SUPER LOCK' app.js
+          grep -Fq 'v6.14.71-ROADTEST-20260906T0112JST' index.html
+      - name: Commit runtime
+        run: |
+          git config user.name jarvis-speed-bot
+          git config user.email actions@users.noreply.github.com
+          git add app.js index.html
+          git commit -m 'fix: start lock and maximum route adhesion v6.14.71'
+          git push origin HEAD:main
