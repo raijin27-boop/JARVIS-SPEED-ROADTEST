@@ -6,7 +6,6 @@ s=s.replace("if(!navSessionStarted||navMode!=='ROUTE'||jarvisDeviationEscape||ja
 old="""  const maxSnap=Math.max(30,Math.min(58,28+acc*1.15));
   if(pr.distance>maxSnap)return{lat,lng};
   const rp=jarvisMotionPointAtS(pr.s);if(!rp)return{lat,lng};
-  // Very strong adhesion: hard snap in ordinary GPS error, then taper near the release edge.
   let strength=pr.distance<=18?.985:pr.distance<=30?.94:pr.distance<=42?.82:.68;
   if(acc>28)strength=Math.min(strength,.80);
   return{lat:lat+(rp.lat-lat)*strength,lng:lng+(rp.lng-lng)*strength};
