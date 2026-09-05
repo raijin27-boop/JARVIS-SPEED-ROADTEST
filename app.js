@@ -677,16 +677,17 @@ function jarvisFollowCameraUpdate(lat,lng,heading,zoom,now,fast=false){
 // v6.14.65 Google-style route adhesion for DISPLAY ONLY.
 function jarvisTrackingDisplayTargetV665(lat,lng){
   if(!navSessionStarted||navMode!=='ROUTE'||jarvisDeviationEscape||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')return{lat,lng};
-  const acc=Number.isFinite(jarvisFreeMotion.accuracy)?jarvisFreeMotion.accuracy:15;
-  const pr=jarvisMotionProject(lat,lng,acc);
-  if(!pr||!Number.isFinite(pr.distance))return{lat,lng};
-  // v6.14.72 SMOOTH ADHESION: keep a strong route bias, but do NOT teleport the display
-  // directly onto each new 1 Hz GPS projection. The free-motion renderer below interpolates
-  // continuously toward this target, eliminating the repeated rabbit-hop caused by v70/v71.
-  const rp=jarvisMotionPointAtS(pr.s);if(!rp)return{lat,lng};
-  let strength=pr.distance<=70?1:pr.distance<=100?.985:.95;
-  if(acc>35)strength=Math.min(strength,.94);
-  return{lat:lat+(rp.lat-lat)*strength,lng:lng+(rp.lng-lng)*strength};
+  // v6.14.73 PROGRESS POSE: TRACKING display is derived from the already stabilized route
+  // progress (displayS), NOT from re-projecting each discrete GPS target every animation frame.
+  // jarvisMotionAcceptFix still projects the accepted GPS fix and independently feeds
+  // off-route/reroute evidence; this changes only rider-facing marker position ownership.
+  if(Number.isFinite(jarvisMotion.displayS)){
+    const rp=jarvisMotionPointAtS(jarvisMotion.displayS);
+    if(rp)return{lat:rp.lat,lng:rp.lng};
+  }
+  // Before the first stable route-progress fix exists, keep the free/GPS pose rather than
+  // snapping to an arbitrary route segment. Once displayS initializes, route progress owns it.
+  return{lat,lng};
 }
 
 function jarvisFreeMotionStart(){
@@ -2095,7 +2096,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.72-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.73-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
