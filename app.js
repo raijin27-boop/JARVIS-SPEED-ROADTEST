@@ -76,6 +76,7 @@ let jarvisNavTrackingState='TRACKING'; // TRACKING / UNCERTAIN / OFF_ROUTE / RER
 let jarvisDeviationEscape=false;       // true: reroute state says old route is stale
 let jarvisVisualGpsPriority=false;       // display-only: GPS owns squid temporarily; MUST NOT trigger reroute state
 let jarvisVisualOnRouteFixes=0;
+let jarvisPreDeviationVisualFixes=0; // v6.14.77 early visual-only departure evidence
 let jarvisDeviationEvidence=0;
 let jarvisDeviationStartedAt=0;
 let jarvisDeviationGpsIsolationUntil=0; // v6.14.18: first 5s after confirmed departure, GPS owns the vehicle display exclusively
@@ -2115,7 +2116,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.76-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.77-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3211,6 +3212,7 @@ function jarvisHeadingMismatch(a,b){
 function jarvisResetAutoRerouteWatch(){
   autoRerouteOffRouteSince=0;
   autoRerouteOffRouteFixes=0;
+  jarvisPreDeviationVisualFixes=0;
   if(!jarvisDeviationEscape)jarvisDeviationEvidence=0;
 }
 
@@ -3618,22 +3620,30 @@ function jarvisAutoRerouteUpdate(coords,speedKmh){
   const clearlyFar=lateral>threshold;
   const hardFar=lateral>Math.max(66,threshold+14);
 
+  // v6.14.77 EARLY VISUAL RELEASE: this evidence is intentionally independent from the
+  // OFF_ROUTE/reroute counter below. A rider who has physically turned away should not see the
+  // ball frozen on the stale route while the safer reroute state machine keeps gathering proof.
+  // With good GPS, require two consecutive visual-only departure fixes. A very strong heading
+  // disagreement can count while still only ~10-15m away; otherwise require modest lateral drift.
+  const visualDeparture=acc<=25&&speed>=8&&(
+    (lateral>Math.max(12,acc*1.45)&&mismatch>48)||
+    (lateral>Math.max(20,acc*2.0))
+  );
+  if(!jarvisDeviationEscape&&visualDeparture){
+    jarvisPreDeviationVisualFixes++;
+    if(jarvisPreDeviationVisualFixes>=2){
+      jarvisVisualGpsPriority=true;
+      jarvisVisualOnRouteFixes=0;
+    }
+  }else if(!jarvisDeviationEscape){
+    jarvisPreDeviationVisualFixes=Math.max(0,jarvisPreDeviationVisualFixes-1);
+  }
+
   if(clearlyFar||headingWrong||decisiveHeading){
     if(!autoRerouteOffRouteSince)autoRerouteOffRouteSince=Date.now();
     autoRerouteOffRouteFixes++;
     jarvisDeviationEvidence+=hardFar?2:1;
     const held=Date.now()-autoRerouteOffRouteSince;
-
-    // v6.14.76 PRE-DEVIATION DISPLAY: do not keep the rider ball frozen on the stale route
-    // while we are still gathering enough evidence for a network reroute. Two consistent good-GPS
-    // departure fixes may hand VISUAL ownership to free/GPS without declaring OFF_ROUTE yet.
-    // This preserves false-reroute protection while making a real missed turn visible immediately.
-    const preDeviationVisual=acc<=25&&speed>=8&&autoRerouteOffRouteFixes>=2&&
-      (decisiveHeading||headingWrong||lateral>Math.max(22,threshold*.68));
-    if(!jarvisDeviationEscape&&preDeviationVisual){
-      jarvisVisualGpsPriority=true;
-      jarvisVisualOnRouteFixes=0;
-    }
 
     // v6.14.76: one stage earlier than v75, but still multi-fix. Strong heading disagreement
     // confirms after 2 fixes; ordinary sustained departure after 3.
