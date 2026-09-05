@@ -678,7 +678,12 @@ function jarvisFollowCameraUpdate(lat,lng,heading,zoom,now,fast=false){
 
 // v6.14.65 Google-style route adhesion for DISPLAY ONLY.
 function jarvisTrackingDisplayTargetV665(lat,lng){
-  if(!navSessionStarted||navMode!=='ROUTE'||jarvisDeviationEscape||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')return{lat,lng};
+  // v6.14.78 VISUAL PRIORITY BYPASS: once visual GPS ownership is granted, do not feed
+  // a route-projected target back into freeMotion. v76/v77 released the renderer, but this
+  // helper still transformed the underlying target onto the stale route, so the ball remained
+  // visibly pulled toward it until deviationEscape/OFF_ROUTE. GPS visual ownership must mean
+  // raw accepted GPS target ownership end-to-end.
+  if(!navSessionStarted||navMode!=='ROUTE'||jarvisVisualGpsPriority||jarvisDeviationEscape||jarvisNavTrackingState==='OFF_ROUTE'||jarvisNavTrackingState==='REROUTING')return{lat,lng};
   // v6.14.73 PROGRESS POSE: TRACKING display is derived from the already stabilized route
   // progress (displayS), NOT from re-projecting each discrete GPS target every animation frame.
   // jarvisMotionAcceptFix still projects the accepted GPS fix and independently feeds
@@ -2116,7 +2121,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.77-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.78-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
