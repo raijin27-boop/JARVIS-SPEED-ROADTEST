@@ -56,6 +56,7 @@ let navRouteLabels=[];
 let routePreviewActive=false;
 let navSessionStarted=false;
 let routeRequestSeq=0, routeLastOrigin=null, routeLastAt=0;
+let jarvisStartGuardAt=0,jarvisStartMovingFixes=0; // v6.14.71 START LOCK
 // v6.9 auto reroute trial
 let autoRerouteOffRouteSince=0;
 let autoRerouteOffRouteFixes=0;
@@ -682,8 +683,9 @@ function jarvisTrackingDisplayTargetV665(lat,lng){
   // v6.14.70 ROUTE LOCK: while navigation state is TRACKING, the rider-facing position
   // belongs to the selected route. Raw GPS remains independent for off-route evidence/rerouting.
   // Do not release the marker merely because GPS heading temporarily disagrees at a bend.
-  const maxSnap=Math.max(105,Math.min(120,96+acc*1.25));
-  if(pr.distance>maxSnap)return{lat,lng};
+  // v6.14.71 SUPER LOCK: TRACKING display always projects to the selected route when a
+  // projection exists. Distance does NOT weaken the visible adhesion; raw GPS remains available
+  // to the independent reroute detector and wins only after OFF_ROUTE/REROUTING is confirmed.
   const rp=jarvisMotionPointAtS(pr.s);if(!rp)return{lat,lng};
   return{lat:rp.lat,lng:rp.lng};
 }
@@ -2097,7 +2099,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.70-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.71-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -3519,7 +3521,22 @@ async function jarvisAutoReroute(strategy=null){
 // decision per fix, one set of counters, and one place that calls jarvisAutoReroute.
 function jarvisAutoRerouteUpdate(coords,speedKmh){
   if(!navSessionStarted||navMode!=='ROUTE'||!routeData){
+    jarvisStartGuardAt=0;jarvisStartMovingFixes=0;
     jarvisNavTrackingState='TRACKING';
+    jarvisResetAutoRerouteWatch();return;
+  }
+  // v6.14.71 START LOCK: never call a stationary START an off-route event. The first route
+  // owns the display while the rider is stopped/creeping and while GPS heading is unavailable.
+  // Reroute evidence is enabled only after both a short settle time and consecutive real motion.
+  if(!jarvisStartGuardAt)jarvisStartGuardAt=Date.now();
+  const startAcc=Number(coords?.accuracy);
+  const startSpeed=Math.max(0,Number(speedKmh)||0);
+  if(startSpeed>=6 && (!Number.isFinite(startAcc)||startAcc<=35))jarvisStartMovingFixes++;
+  else if(startSpeed<3)jarvisStartMovingFixes=0;
+  const startGuard=(Date.now()-jarvisStartGuardAt<6000)||(jarvisStartMovingFixes<4);
+  if(startGuard){
+    jarvisNavTrackingState='TRACKING';
+    jarvisDeviationEscape=false;jarvisVisualGpsPriority=false;jarvisDeviationEvidence=0;
     jarvisResetAutoRerouteWatch();return;
   }
   if(jarvisNavTrackingState==='ARRIVED')return;
