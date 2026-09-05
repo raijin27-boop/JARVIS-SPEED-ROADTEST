@@ -1352,11 +1352,27 @@ function jarvisClearPreviewTurnArrows(){
   for(const line of jarvisPreviewTurnArrowLines){try{line?.setMap?.(null)}catch(e){}}
   jarvisPreviewTurnArrowLines=[];
 }
+function jarvisPreviewManeuverEvents(){
+  const base=jarvisTurnEvents();
+  const out=base.slice(),seen=new Set(base.map(e=>e.stepIndex));
+  const steps=jarvisVoiceSteps();
+  for(let i=0;i<steps.length;i++){
+    if(seen.has(i))continue;
+    const st=steps[i],strength=jarvisTurnStrength(st);
+    if(!['HARD','SLIGHT','EXIT','DIVERGE','MERGE'].includes(strength))continue;
+    const pt=jarvisVoiceManeuverPoint(st);if(!pt)continue;
+    const pr=jarvisMotionProject(pt.latitude,pt.longitude);if(!pr)continue;
+    const kind=jarvisGuidanceKind(strength),m=jarvisTurnManeuver(st);
+    const dir=jarvisTurnDir(st)||jarvisManeuverDir(m)||jarvisInstructionDir(st)||null;
+    out.push({stepIndex:i,s:pr.s,startS:Math.max(0,pr.s-3),endS:Math.min(jarvisMotion.total,pr.s+5),turnDeg:0,dir,key:`${i}:${kind}:PREVIEW_RESCUE`,source:'PREVIEW_RESCUE',maneuver:m,kind});
+  }
+  return out.sort((a,b)=>a.s-b.s);
+}
 function jarvisRenderPreviewTurnArrows(){
   jarvisClearPreviewTurnArrows();
-  if(!navGoogleMap||navMode!=='ROUTE'||navSessionStarted||!routePreviewActive||!routeData)return;
+  if(!navGoogleMap||navMode!=='ROUTE'||(!routePreviewActive&&!navSessionStarted)||!routeData)return;
   if(!jarvisMotionPreparePath())return;
-  const events=jarvisTurnEvents();
+  const events=jarvisPreviewManeuverEvents();
   for(let ei=0;ei<events.length;ei++){
     const turn=events[ei];
     const win=jarvisTurnArrowWindow(turn);
@@ -2115,7 +2131,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.63-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.64-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
