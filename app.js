@@ -1347,6 +1347,32 @@ function jarvisAdaptiveNavZoom(turnInfo){
   return baseZoom;
 }
 let jarvisTurnArrowLine=null;
+let jarvisPreviewTurnArrowLines=[];
+function jarvisClearPreviewTurnArrows(){
+  for(const line of jarvisPreviewTurnArrowLines){try{line?.setMap?.(null)}catch(e){}}
+  jarvisPreviewTurnArrowLines=[];
+}
+function jarvisRenderPreviewTurnArrows(){
+  jarvisClearPreviewTurnArrows();
+  if(!navGoogleMap||navMode!=='ROUTE'||navSessionStarted||!routePreviewActive||!routeData)return;
+  if(!jarvisMotionPreparePath())return;
+  const events=jarvisTurnEvents();
+  for(const turn of events){
+    const win=jarvisTurnArrowWindow(turn);
+    if(!win)continue;
+    const pts=[],s0=win.startS,s1=win.endS;
+    if(!Number.isFinite(s0)||!Number.isFinite(s1)||s1<=s0)continue;
+    const count=Math.max(10,Math.min(40,Math.ceil((s1-s0)/2)));
+    for(let i=0;i<=count;i++){
+      const p=jarvisMotionPointAtS(s0+(s1-s0)*(i/count));
+      if(p)pts.push({lat:p.lat,lng:p.lng});
+    }
+    if(pts.length<2)continue;
+    const icons=[{icon:{path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:win.branch?4.8:4.2,strokeColor:'#fff',strokeWeight:1.6,fillColor:'#fff',fillOpacity:.88},offset:'100%'}];
+    const line=new google.maps.Polyline({map:navGoogleMap,path:pts,strokeColor:'#fff',strokeOpacity:.76,strokeWeight:win.branch?6:5,zIndex:90,clickable:false,icons});
+    jarvisPreviewTurnArrowLines.push(line);
+  }
+}
 function jarvisClearTurnArrow(){try{jarvisTurnArrowLine?.setMap?.(null)}catch(e){}jarvisTurnArrowLine=null;}
 function jarvisTurnArrowWindow(turn){
   if(!turn)return null;
@@ -2074,7 +2100,7 @@ const JARVIS_ROAD_TEST_ERROR_CAPACITY=200;
 // in the exported JSON and the on-screen build tag — this is what "unique BUILD-ID" (§6) means
 // concretely, without needing a separate versioned JS filename for a file that is inlined into
 // one self-contained HTML document rather than fetched separately (see road-test/README.md).
-const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.58-ROADTEST-dev';
+const JARVIS_ROAD_TEST_BUILD_ID=(typeof window!=='undefined'&&window.__JARVIS_ROAD_TEST_BUILD_ID)||'v6.14.59-ROADTEST-dev';
 
 // Fixed-capacity ring buffer: O(1) push regardless of how long the session runs, unlike an
 // unbounded array with periodic .shift() calls (O(n) each time, and still technically unbounded
@@ -2457,6 +2483,7 @@ function jarvisSetNavMode(mode){
 }
 function jarvisHideRouteLines(){
   jarvisClearRouteLabels();
+  jarvisClearPreviewTurnArrows?.();
   navRouteLine?.setMap(null);landRouteLine?.setMap(null);
   navAltRouteLines.forEach(x=>x?.setMap(null)); navAltRouteLines=[];
 }
@@ -3012,6 +3039,7 @@ async function jarvisStopRouteNavigation(){
 // only then dispose of whatever they are replacing, so a failed rebuild can never leave the map
 // with fewer route lines than it had before this call.
 function jarvisRenderRoute(){
+  setTimeout(jarvisRenderPreviewTurnArrows,0);
   const colors=['#238cff','#72d2ff','#8ee6a8'];
   jarvisClearRouteLabels();
 
