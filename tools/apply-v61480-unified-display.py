@@ -46,7 +46,7 @@ new_func=r'''function jarvisTrackingDisplayTargetV665(lat,lng){
   if(jarvisDeviationEscape)wanted=0;
 
   // Release quickly when evidence rises; reacquire more cautiously when returning to the route.
-  const k=wanted<jarvisDisplayRouteWeight?.58:.20;
+  const k=wanted<jarvisDisplayRouteWeight ? .58 : .20;
   jarvisDisplayRouteWeight += (wanted-jarvisDisplayRouteWeight)*k;
   jarvisDisplayRouteWeight=Math.max(0,Math.min(1,jarvisDisplayRouteWeight));
 
